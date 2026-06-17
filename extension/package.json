@@ -3,7 +3,7 @@
   "displayName": "Euron Coding Agent",
   "description": "Lightweight agentic coding assistant (Cline/OpenCode-style). Plan, edit, and run code with approvals. Works with Euron/Euri, OpenAI, OpenRouter, Anthropic, Ollama, or any OpenAI-compatible/self-hosted model.",
   "version": "0.1.0",
-  "publisher": "euron-tech",
+  "publisher": "Euron",
   "license": "MIT",
   "icon": "media/icon.png",
   "engines": {

@@ -44,6 +44,14 @@ class AgentConfig:
     auto_approve_commands: bool = False
     max_file_bytes: int = 120_000
     max_command_seconds: int = 60
+    # context-window management
+    max_context_tokens: int = 24_000  # compact history above this estimate
+    compact_history: bool = True
+    # resilience
+    retry_attempts: int = 3
+    retry_backoff: float = 1.5
+    # ignore .gitignore-listed paths in addition to the configured globs
+    use_gitignore: bool = True
 
 
 @dataclass
@@ -191,6 +199,11 @@ def load_config(
         auto_approve_commands=bool(agent_raw.get("auto_approve_commands", False)),
         max_file_bytes=int(agent_raw.get("max_file_bytes", 120_000)),
         max_command_seconds=int(agent_raw.get("max_command_seconds", 60)),
+        max_context_tokens=int(agent_raw.get("max_context_tokens", 24_000)),
+        compact_history=bool(agent_raw.get("compact_history", True)),
+        retry_attempts=int(agent_raw.get("retry_attempts", 3)),
+        retry_backoff=float(agent_raw.get("retry_backoff", 1.5)),
+        use_gitignore=bool(agent_raw.get("use_gitignore", True)),
     )
 
     ignore = raw.get("ignore") or DEFAULT_IGNORE

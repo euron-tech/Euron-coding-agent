@@ -13,9 +13,10 @@ import fnmatch
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .config import AgentConfig
 
@@ -61,6 +62,15 @@ class ToolContext:
         return False
 
 
+def _is_binary(path: Path) -> bool:
+    """Heuristic: a NUL byte in the first 4 KB means it's not text."""
+    try:
+        with open(path, "rb") as f:
+            return b"\x00" in f.read(4096)
+    except Exception:
+        return False
+
+
 # --------------------------------------------------------------------------- #
 # Read-only tools
 # --------------------------------------------------------------------------- #
@@ -100,6 +110,11 @@ def read_file(
         return ToolOutcome(
             f"File too large ({full.stat().st_size} bytes > "
             f"{ctx.cfg.max_file_bytes}). Read a line range instead.",
+            ok=False,
+        )
+    if _is_binary(full):
+        return ToolOutcome(
+            f"{path} appears to be a binary/non-text file; cannot read as text.",
             ok=False,
         )
     text = full.read_text(encoding="utf-8", errors="replace")
@@ -241,27 +256,61 @@ def delete_file(ctx: ToolContext, path: str) -> ToolOutcome:
     return ToolOutcome(f"Deleted {path}.", diff=_unified(path, before, ""))
 
 
-def run_command(ctx: ToolContext, command: str) -> ToolOutcome:
+def run_command(
+    ctx: ToolContext,
+    command: str,
+    on_output: Optional[Callable[[str], None]] = None,
+) -> ToolOutcome:
+    """Run a shell command, streaming each output line to `on_output` if given.
+
+    Output is merged (stdout+stderr) and bounded by a watchdog timer so a hung
+    process is always killed after `max_command_seconds`.
+    """
     try:
-        res = subprocess.run(
+        proc = subprocess.Popen(
             command,
             cwd=ctx.root,
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=ctx.cfg.max_command_seconds,
+            bufsize=1,
         )
-    except subprocess.TimeoutExpired:
-        return ToolOutcome(
-            f"Command timed out after {ctx.cfg.max_command_seconds}s: {command}",
-            ok=False,
-        )
-    parts = [f"$ {command}", f"(exit {res.returncode})"]
-    if res.stdout:
-        parts.append("--- stdout ---\n" + res.stdout[-6000:])
-    if res.stderr:
-        parts.append("--- stderr ---\n" + res.stderr[-4000:])
-    return ToolOutcome("\n".join(parts), ok=res.returncode == 0)
+    except Exception as e:  # noqa: BLE001
+        return ToolOutcome(f"Failed to start command: {e}", ok=False)
+
+    killed = {"v": False}
+
+    def _kill():
+        killed["v"] = True
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    timer = threading.Timer(ctx.cfg.max_command_seconds, _kill)
+    timer.start()
+    captured: list[str] = []
+    try:
+        if proc.stdout:
+            for line in proc.stdout:
+                captured.append(line)
+                if on_output:
+                    on_output(line)
+        proc.wait()
+    finally:
+        timer.cancel()
+
+    rc = proc.returncode
+    out = "".join(captured)
+    if len(out) > 8000:
+        out = "… (truncated)\n" + out[-8000:]
+    parts = [f"$ {command}", f"(exit {rc})"]
+    if killed["v"]:
+        parts.append(f"[timed out after {ctx.cfg.max_command_seconds}s — killed]")
+    if out.strip():
+        parts.append("--- output ---\n" + out)
+    return ToolOutcome("\n".join(parts), ok=(rc == 0 and not killed["v"]))
 
 
 # --------------------------------------------------------------------------- #

@@ -59,6 +59,29 @@ def error(message: str) -> dict:
     return {"type": "error", "message": message}
 
 
+def command_output(call_id: str, text: str) -> dict:
+    """A streamed chunk of stdout/stderr from a running command."""
+    return {"type": "command_output", "id": call_id, "text": text}
+
+
+def usage(prompt: int, completion: int, total_session: int) -> dict:
+    return {
+        "type": "usage",
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "session_tokens": total_session,
+    }
+
+
+def cancelled() -> dict:
+    return {"type": "cancelled"}
+
+
+def info(message: str) -> dict:
+    """A neutral notice (compaction, checkpoint, undo, …)."""
+    return {"type": "info", "message": message}
+
+
 # --------------------------------------------------------------------------- #
 # Approval decision + IO interface
 # --------------------------------------------------------------------------- #
@@ -72,9 +95,10 @@ class AgentIO(abc.ABC):
     """How the agent loop emits output and requests human approval."""
 
     @abc.abstractmethod
-    def on_token(self, text: str) -> None:
-        """Called for every streamed token. MAY be invoked from a worker
-        thread, so implementations must be thread-safe / non-blocking."""
+    def emit_sync(self, event: dict) -> None:
+        """Emit an event from anywhere — including a worker thread. Used for
+        streamed `token` and `command_output`. Implementations must be
+        thread-safe / non-blocking."""
 
     @abc.abstractmethod
     async def emit(self, event: dict) -> None:
@@ -83,3 +107,7 @@ class AgentIO(abc.ABC):
     @abc.abstractmethod
     async def request_approval(self, request: dict) -> ApprovalDecision:
         """Ask the human to approve a gated action and block until answered."""
+
+    # Back-compat convenience used by the LLM stream callback.
+    def on_token(self, text: str) -> None:
+        self.emit_sync(token(text))

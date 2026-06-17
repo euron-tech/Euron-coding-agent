@@ -267,37 +267,35 @@ explicit CLI/extension overrides. Any OpenAI-compatible endpoint works by settin
 
 ### Implemented
 - ✅ Agentic loop with **native tool-calling** and multi-step iteration.
-- ✅ Provider-agnostic LLM layer (OpenAI-compatible + Anthropic), **streaming**.
-- ✅ Tools: list, read (ranged), search (ripgrep), write, **surgical edit**,
-  create, delete, run command — all **workspace-sandboxed**.
-- ✅ **Approval gating with diffs** for every mutation/command.
+- ✅ Provider-agnostic LLM layer (OpenAI-compatible + Anthropic), **streaming**,
+  with **retry/backoff** and **token-usage** accounting.
+- ✅ Tools: list, read (ranged, binary-guarded), search (ripgrep), write,
+  **surgical edit**, create, delete, run command — all **workspace-sandboxed**.
+- ✅ **Approval gating with diffs** for every mutation/command, plus an
+  **auto-approve** toggle (CLI `/yes`, extension toolbar).
+- ✅ **Cancel/stop** mid-task and **undo** (per-turn checkpoint/revert).
+- ✅ **Streaming command output** (live stdout/stderr).
+- ✅ **Context management**: token estimate + automatic compaction of old tool
+  output when over the window budget; **@file mentions** inline file contents.
+- ✅ **Persistent history** per workspace across restarts (CLI `--resume`,
+  extension `persistHistory`).
+- ✅ **.gitignore-aware** ignores in addition to configured globs.
+- ✅ **Multi-root workspace** selection.
 - ✅ Two front-ends sharing one brain: VS Code webview + terminal CLI.
 - ✅ Zero-setup backend (auto venv + PyPI install) and **SecretStorage** keys.
-- ✅ Per-session conversation memory (within a CLI `chat` / a connected webview).
-- ✅ Packaging + CI/CD to PyPI, Marketplace, Open VSX.
+- ✅ **Cloud/self-host ready**: bearer-token auth + bind to any host
+  (`serve --host 0.0.0.0 --token …`).
+- ✅ A real **pytest** suite (`backend/tests/`); packaging + CI/CD to PyPI,
+  Marketplace, Open VSX.
 
-### Not implemented (known limitations / roadmap)
-- ❌ **No cancel/stop button** mid-task in the UI (you can't interrupt a run
-  except by disconnecting/restarting the backend).
-- ❌ **No persistent history** across VS Code reloads — context lives in memory
-  per connection; reloading the window starts fresh.
-- ❌ **No context-window management**: file tree is truncated (≈800 entries) and
-  files are size-capped, but there's **no token counting, summarization, RAG, or
-  embeddings**. Large repos rely on the model searching/reading on demand.
-- ❌ **No `@file` mentions / manual context picker** in the UI.
-- ❌ **Edits write to disk directly** — not via VS Code `WorkspaceEdit`, so
-  there's **no native editor undo** and **no git checkpoint/revert** built in.
-- ❌ **No streaming of command output** — `run_command` returns only after it
-  finishes (timeout-bounded); not suitable for long-running servers.
-- ❌ **No auto-approve toggle in the extension UI** (the CLI has `--yes` / `/yes`;
-  config flags exist, but the webview always asks).
-- ❌ **No multi-root workspace** support (uses the first workspace folder).
-- ❌ **No LLM retry/backoff**, no usage/cost tracking, no telemetry.
-- ❌ **No automated test suite** in the repo (the agent was validated manually
-  and with ad-hoc scripts during development).
-- ❌ **No binary/image file handling** (text files only).
-- ❌ Ignore rules use the configured globs, **not the repo's `.gitignore`**.
-- ❌ Backend server has **no auth** (binds localhost only).
+### Still on the roadmap
+- ❌ Edits write to disk directly (undo is via the built-in checkpointer, **not**
+  VS Code's native `WorkspaceEdit`/editor undo or git).
+- ❌ Context compaction trims old tool output but has **no semantic summarization,
+  RAG, or embeddings** for very large repos.
+- ❌ No usage **cost** estimation (token counts only) and no telemetry.
+- ❌ Cancellation takes effect at the next step boundary (it can't abort a single
+  in-flight model response mid-stream).
 
 ---
 

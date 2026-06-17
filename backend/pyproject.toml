@@ -1,6 +1,6 @@
 [project]
 name = "euron-coding-agent"
-version = "0.1.1"
+version = "0.2.0"
 description = "Lightweight provider-agnostic agentic coding backend (CLI + server) for the Euron VS Code extension."
 readme = "README.md"
 requires-python = ">=3.9"

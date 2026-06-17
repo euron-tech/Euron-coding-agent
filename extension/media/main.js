@@ -3,8 +3,12 @@
   const log = document.getElementById('log');
   const promptEl = document.getElementById('prompt');
   const sendBtn = document.getElementById('send');
+  const stopBtn = document.getElementById('stop');
+  const undoBtn = document.getElementById('undo');
+  const tokensEl = document.getElementById('tokens');
 
-  let assistantEl = null; // current streaming assistant bubble
+  let assistantEl = null;
+  let cmdEl = null; // current streaming command output block
   let busy = false;
 
   function scroll() {
@@ -41,6 +45,7 @@
     busy = b;
     sendBtn.disabled = b;
     sendBtn.textContent = b ? '…' : 'Run';
+    stopBtn.style.display = b ? 'inline-block' : 'none';
   }
 
   function run() {
@@ -49,11 +54,14 @@
     add('user', escapeHtml(text));
     promptEl.value = '';
     assistantEl = null;
+    cmdEl = null;
     setBusy(true);
     vscode.postMessage({ command: 'run', text });
   }
 
   sendBtn.addEventListener('click', run);
+  stopBtn.addEventListener('click', () => vscode.postMessage({ command: 'cancel' }));
+  undoBtn.addEventListener('click', () => vscode.postMessage({ command: 'undo' }));
   promptEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
@@ -91,12 +99,7 @@
     no.textContent = 'Reject';
     no.className = 'reject';
     const finish = (approved) => {
-      vscode.postMessage({
-        command: 'approval',
-        id: ev.id,
-        approved,
-        feedback: fb.value || undefined
-      });
+      vscode.postMessage({ command: 'approval', id: ev.id, approved, feedback: fb.value || undefined });
       yes.disabled = no.disabled = true;
       head.textContent = (approved ? '✓ Approved: ' : '✗ Rejected: ') + ev.name;
     };
@@ -115,21 +118,31 @@
       case 'status':
         add('status', escapeHtml(ev.message));
         break;
+      case 'info':
+        add('status', 'ℹ ' + escapeHtml(ev.message));
+        break;
       case 'token':
         if (!assistantEl) assistantEl = add('assistant', '');
         assistantEl.textContent += ev.text;
         scroll();
         break;
       case 'assistant_message':
-        // streaming already rendered the text; just close this bubble
         assistantEl = null;
         break;
       case 'tool_start': {
         const a = ev.args || {};
         const detail = a.path || a.command || a.query || '';
         add('tool', '⚙ <b>' + escapeHtml(ev.name) + '</b> ' + escapeHtml(detail));
+        cmdEl = null;
         break;
       }
+      case 'command_output':
+        if (!cmdEl) {
+          cmdEl = add('cmdout', '');
+        }
+        cmdEl.textContent += ev.text;
+        scroll();
+        break;
       case 'diff':
         add('diffwrap', '<div class="diff-path">' + escapeHtml(ev.path) +
           (ev.is_new ? ' (new)' : '') + '</div><pre class="diff">' +
@@ -138,12 +151,18 @@
       case 'tool_result': {
         const mark = ev.ok ? '✓' : '✗';
         const out = (ev.output || '').slice(0, 1500);
-        add('result ' + (ev.ok ? 'ok' : 'fail'),
-          mark + ' <pre>' + escapeHtml(out) + '</pre>');
+        add('result ' + (ev.ok ? 'ok' : 'fail'), mark + ' <pre>' + escapeHtml(out) + '</pre>');
+        cmdEl = null;
         break;
       }
+      case 'usage':
+        tokensEl.textContent = '⛁ ' + ev.session_tokens + ' tokens';
+        break;
       case 'approval_request':
         approvalCard(ev);
+        break;
+      case 'cancelled':
+        add('status', '■ cancelled');
         break;
       case 'error':
         add('error', '⚠ ' + escapeHtml(ev.message));
@@ -151,6 +170,7 @@
       case 'done':
         setBusy(false);
         assistantEl = null;
+        cmdEl = null;
         break;
     }
   });

@@ -2,7 +2,7 @@
   "name": "euron-agent",
   "displayName": "Euron Coding Agent",
   "description": "Lightweight agentic coding assistant (Cline/OpenCode-style). Plan, edit, and run code with approvals. Works with Euron/Euri, OpenAI, OpenRouter, Anthropic, Ollama, or any OpenAI-compatible/self-hosted model.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "Euron",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -81,6 +81,30 @@
         "title": "Restart Backend",
         "category": "Euron Agent",
         "icon": "$(debug-restart)"
+      },
+      {
+        "command": "euronAgent.stop",
+        "title": "Stop Current Task",
+        "category": "Euron Agent",
+        "icon": "$(stop-circle)"
+      },
+      {
+        "command": "euronAgent.undo",
+        "title": "Undo Last Task's Changes",
+        "category": "Euron Agent",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "euronAgent.toggleAutoApprove",
+        "title": "Toggle Auto-Approve",
+        "category": "Euron Agent",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "euronAgent.selectWorkspace",
+        "title": "Select Workspace Folder",
+        "category": "Euron Agent",
+        "icon": "$(folder)"
       }
     ],
     "menus": {
@@ -96,9 +120,14 @@
           "group": "navigation@2"
         },
         {
-          "command": "euronAgent.restartBackend",
+          "command": "euronAgent.toggleAutoApprove",
           "when": "view == euronAgent.chat",
           "group": "navigation@3"
+        },
+        {
+          "command": "euronAgent.restartBackend",
+          "when": "view == euronAgent.chat",
+          "group": "navigation@4"
         }
       ]
     },
@@ -124,6 +153,16 @@
           "type": "string",
           "default": "",
           "description": "Advanced: connect to a backend you run yourself (e.g. ws://127.0.0.1:8000/ws). Empty = the extension auto-installs and manages the backend for you."
+        },
+        "euronAgent.token": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for a remote/self-hosted backend (euronAgent.serverUrl). Not needed for the auto-managed local backend."
+        },
+        "euronAgent.persistHistory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remember the conversation per workspace across reloads."
         }
       }
     }

@@ -60,10 +60,11 @@ class TerminalIO(AgentIO):
             sys.stdout.flush()
             self._dirty = False
 
-    def on_token(self, text: str) -> None:
-        sys.stdout.write(text)
-        sys.stdout.flush()
-        self._dirty = True
+    def emit_sync(self, event: dict) -> None:
+        if event.get("type") in ("token", "command_output"):
+            sys.stdout.write(event["text"])
+            sys.stdout.flush()
+            self._dirty = True
 
     async def emit(self, event: dict) -> None:
         t = event["type"]
@@ -87,6 +88,15 @@ class TerminalIO(AgentIO):
                 console.print(f"{mark} [dim]{snippet}[/dim]")
         elif t == "error":
             console.print(f"[red]error:[/red] {event['message']}")
+        elif t == "usage":
+            console.print(
+                f"[dim]· {event['prompt_tokens']}+{event['completion_tokens']} tok "
+                f"(session {event['session_tokens']})[/dim]"
+            )
+        elif t == "info":
+            console.print(f"[dim]ℹ {event['message']}[/dim]")
+        elif t == "cancelled":
+            console.print("[yellow]■ cancelled[/yellow]")
         elif t == "done":
             console.print("[dim]— done —[/dim]")
 
@@ -161,7 +171,7 @@ def _reload(session: AgentSession, args) -> None:
     cfg = resolve_config(args)
     session.config = cfg
     session.ctx.cfg = cfg.agent
-    session.client = build_client(cfg.provider)
+    session.client = build_client(cfg.provider, cfg.agent)
 
 
 # --------------------------------------------------------------------------- #
@@ -196,9 +206,10 @@ HELP = """[bold]commands[/bold]
   /baseurl [url]     set a custom base URL (self-hosted / custom endpoints)
   /config            show current provider, model, base URL, key status
   /providers         list known providers
+  /undo              revert the file changes from the last task
   /reset             clear the conversation context
   /yes               toggle auto-approve for edits & commands
-  /help              show this help
+  /help              show this help (Ctrl+C during a task = stop)
   /exit              quit"""
 
 
@@ -242,6 +253,14 @@ async def _handle_command(line: str, session: AgentSession, args, io: TerminalIO
         return "exit"
     if cmd == "/help":
         console.print(HELP)
+    elif cmd == "/undo":
+        reverted = session.undo()
+        if reverted:
+            console.print(f"[green]reverted {len(reverted)} file(s)[/green]")
+            for p in reverted:
+                console.print(f"  [dim]{p}[/dim]")
+        else:
+            console.print("[dim]nothing to undo[/dim]")
     elif cmd == "/reset":
         session.messages.clear()
         console.print("[dim]context cleared[/dim]")
@@ -309,7 +328,7 @@ async def _chat(args) -> None:
     cfg = resolve_config(args)
     workspace = str(Path(args.workspace).resolve())
     io = TerminalIO(auto_approve=getattr(args, "yes", False))
-    session = AgentSession(workspace, cfg, io)
+    session = AgentSession(workspace, cfg, io, persist=getattr(args, "resume", False))
     console.print(
         Panel(
             f"Euron Agent · [bold]{cfg.provider.name}[/bold] / {cfg.provider.model}\n"
@@ -341,7 +360,16 @@ async def _chat(args) -> None:
                 "[yellow]No API key set — use /key first (or /provider to switch).[/yellow]"
             )
             continue
-        await session.run(msg)
+        task = asyncio.ensure_future(session.run(msg))
+        try:
+            await task
+        except KeyboardInterrupt:
+            session.cancel()
+            console.print("\n[yellow]stopping…[/yellow]")
+            try:
+                await task
+            except Exception:
+                pass
     console.print("[dim]bye[/dim]")
 
 
@@ -353,7 +381,15 @@ def cmd_serve(args) -> None:
     from .server import serve
 
     console.print(f"[cyan]Euron Agent server[/cyan] on http://{args.host}:{args.port}")
-    serve(host=args.host, port=args.port, reload=args.reload)
+    if args.host not in ("127.0.0.1", "localhost") and args.no_auth:
+        console.print("[red]warning:[/red] serving on a public host with auth disabled!")
+    serve(
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        token=args.token,
+        auth=not args.no_auth,
+    )
 
 
 def cmd_providers(args) -> None:
@@ -435,11 +471,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     c = sub.add_parser("chat", help="Interactive REPL")
     c.add_argument("--yes", "-y", action="store_true", help="Auto-approve all actions")
+    c.add_argument("--resume", action="store_true", help="Resume this workspace's saved history")
     c.set_defaults(func=cmd_chat)
 
     s = sub.add_parser("serve", help="Start the FastAPI server")
-    s.add_argument("--host", default="127.0.0.1")
-    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--host", default="127.0.0.1", help="Bind host (0.0.0.0 for remote/cloud)")
+    s.add_argument("--port", type=int, default=8000, help="Port (0 = auto-pick a free port)")
+    s.add_argument("--token", help="Bearer token clients must send (else one is generated)")
+    s.add_argument("--no-auth", action="store_true", help="Disable token auth (local only!)")
     s.add_argument("--reload", action="store_true")
     s.set_defaults(func=cmd_serve)
 

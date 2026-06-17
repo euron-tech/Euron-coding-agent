@@ -32,6 +32,8 @@ const PROVIDERS: ProviderMeta[] = [
 const KEY_PROVIDER = 'euronAgent.provider';
 const KEY_BASEURL = 'euronAgent.baseUrl';
 const KEY_MODEL = 'euronAgent.customModel';
+const KEY_AUTOAPPROVE = 'euronAgent.autoApprove';
+const KEY_WORKSPACE = 'euronAgent.workspace';
 const secretKeyFor = (provider: string) => `euronAgent.apiKey:${provider}`;
 
 function providerMeta(id: string): ProviderMeta {
@@ -62,6 +64,28 @@ export function activate(context: vscode.ExtensionContext) {
       backend.stop();
       provider.dropConnection();
       vscode.window.showInformationMessage('Euron Agent backend will restart on next run.');
+    }),
+    vscode.commands.registerCommand('euronAgent.stop', () => provider.stopTask()),
+    vscode.commands.registerCommand('euronAgent.undo', () => provider.undo()),
+    vscode.commands.registerCommand('euronAgent.toggleAutoApprove', async () => {
+      const cur = context.globalState.get<boolean>(KEY_AUTOAPPROVE) || false;
+      await context.globalState.update(KEY_AUTOAPPROVE, !cur);
+      vscode.window.showInformationMessage(`Euron Agent auto-approve: ${!cur ? 'ON' : 'off'}`);
+    }),
+    vscode.commands.registerCommand('euronAgent.selectWorkspace', async () => {
+      const folders = vscode.workspace.workspaceFolders || [];
+      if (folders.length < 2) {
+        vscode.window.showInformationMessage('Only one workspace folder is open.');
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(
+        folders.map((f) => ({ label: f.name, description: f.uri.fsPath })),
+        { placeHolder: 'Workspace folder the agent should operate on' }
+      );
+      if (pick) {
+        await context.globalState.update(KEY_WORKSPACE, pick.description);
+        vscode.window.showInformationMessage(`Euron Agent workspace: ${pick.label}`);
+      }
     }),
     { dispose: () => backend.stop() }
   );
@@ -143,7 +167,8 @@ async function buildInitPayload(
     return undefined;
   }
 
-  const settingModel = vscode.workspace.getConfiguration('euronAgent').get<string>('model');
+  const cfg = vscode.workspace.getConfiguration('euronAgent');
+  const settingModel = cfg.get<string>('model');
   const customModel = context.globalState.get<string>(KEY_MODEL);
   return {
     type: 'init',
@@ -151,7 +176,9 @@ async function buildInitPayload(
     provider: providerId,
     api_key: apiKey || undefined,
     base_url: meta.custom ? context.globalState.get<string>(KEY_BASEURL) : undefined,
-    model: settingModel || (meta.custom ? customModel : undefined) || undefined
+    model: settingModel || (meta.custom ? customModel : undefined) || undefined,
+    auto_approve: context.globalState.get<boolean>(KEY_AUTOAPPROVE) || false,
+    persist: cfg.get<boolean>('persistHistory') ?? true
   };
 }
 
@@ -178,8 +205,14 @@ class BackendManager {
   private process?: cp.ChildProcess;
   private wsUrl?: string;
   private startPromise?: Promise<string | undefined>;
+  private _token?: string;
 
   constructor(private readonly context: vscode.ExtensionContext) {}
+
+  get token(): string | undefined {
+    const override = vscode.workspace.getConfiguration('euronAgent').get<string>('token');
+    return override || this._token;
+  }
 
   private get storageDir(): string {
     const dir = this.context.globalStorageUri.fsPath;
@@ -204,6 +237,7 @@ class BackendManager {
       this.process = undefined;
     }
     this.wsUrl = undefined;
+    this._token = undefined;
     this.startPromise = undefined;
   }
 
@@ -333,6 +367,10 @@ class BackendManager {
 
       child.stdout?.on('data', (d) => {
         buffer += d.toString();
+        const tok = buffer.match(/EURON_AGENT_TOKEN (\S+)/);
+        if (tok) {
+          this._token = tok[1];
+        }
         const m = buffer.match(/EURON_AGENT_LISTENING (http:\/\/\S+)/);
         if (m) {
           this.wsUrl = m[1].replace(/^http/, 'ws') + '/ws';
@@ -379,8 +417,34 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
         case 'approval':
           this.send({ type: 'approval', id: msg.id, approved: msg.approved, feedback: msg.feedback });
           break;
+        case 'cancel':
+          this.stopTask();
+          break;
+        case 'undo':
+          this.undo();
+          break;
       }
     });
+  }
+
+  stopTask() {
+    this.send({ type: 'cancel' });
+  }
+
+  undo() {
+    this.send({ type: 'undo' });
+  }
+
+  private getWorkspace(): string | undefined {
+    const folders = vscode.workspace.workspaceFolders || [];
+    if (folders.length === 0) {
+      return undefined;
+    }
+    const chosen = this.context.globalState.get<string>(KEY_WORKSPACE);
+    if (chosen && folders.some((f) => f.uri.fsPath === chosen)) {
+      return chosen;
+    }
+    return folders[0].uri.fsPath;
   }
 
   dropConnection() {
@@ -405,7 +469,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async runTask(text: string) {
-    const workspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const workspace = this.getWorkspace();
     if (!workspace) {
       this.post({ type: 'error', message: 'Open a folder/workspace first.' });
       this.post({ type: 'done' });
@@ -421,6 +485,7 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
       this.post({ type: 'done' });
       return;
     }
+    init.token = this.backend.token;
     this.send(init);
     this.send({ type: 'run', task: text });
   }
@@ -503,10 +568,15 @@ class ChatViewProvider implements vscode.WebviewViewProvider {
   <title>Euron Agent</title>
 </head>
 <body>
+  <div id="topbar">
+    <span id="tokens"></span>
+    <button id="undo" title="Revert the last task's file changes">Undo</button>
+  </div>
   <div id="log"></div>
   <div id="composer">
     <textarea id="prompt" rows="3" placeholder="Ask Euron Agent to change your code… (Ctrl/Cmd+Enter)"></textarea>
     <button id="send">Run</button>
+    <button id="stop" style="display:none;">Stop</button>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>

@@ -1,22 +1,29 @@
 """FastAPI server: WebSocket (streaming + approvals) and a REST fallback.
 
-WebSocket protocol (JSON messages both directions)
---------------------------------------------------
-Client -> server:
-  {"type": "init", "workspace_path": "...", "provider": "euri"?, "model": "..."?}
-  {"type": "run",  "task": "..."}
-  {"type": "approval", "id": "...", "approved": true|false, "feedback": "..."?}
+Cloud-ready: optional bearer-token auth (`--token` / $EURON_AGENT_TOKEN), bind to
+any host, dynamic port, cancel/undo, auto-approve, and cross-restart persistence.
 
-Server -> client (see euron_agent.events):
-  status | token | assistant_message | tool_start | diff | tool_result |
-  approval_request | done | error
+WebSocket protocol (JSON both directions)
+-----------------------------------------
+Client -> server:
+  {"type":"init","workspace_path":"...","provider":"euri"?,"model":"..."?,
+   "api_key":"..."?,"base_url":"..."?,"auto_approve":bool?,"persist":bool?,"token":"..."?}
+  {"type":"run","task":"..."}
+  {"type":"approval","id":"...","approved":bool,"feedback":"..."?}
+  {"type":"cancel"}            # stop the running task
+  {"type":"undo"}              # revert the last turn's file changes
+  {"type":"ping"}
+
+Server -> client: see euron_agent.events.
 """
 from __future__ import annotations
 
 import asyncio
+import os
+import secrets
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from . import events as ev
@@ -24,7 +31,13 @@ from .config import Config, load_config
 from .events import AgentIO, ApprovalDecision
 from .loop import AgentSession
 
-app = FastAPI(title="Euron Agent", version="0.1.0")
+app = FastAPI(title="Euron Agent", version="0.2.0")
+app.state.token = None  # set by serve(); None disables auth (local dev/tests)
+
+
+def _auth_ok(provided: Optional[str]) -> bool:
+    expected = app.state.token
+    return expected is None or (provided is not None and secrets.compare_digest(provided, expected))
 
 
 # --------------------------------------------------------------------------- #
@@ -36,12 +49,17 @@ class WebSocketIO(AgentIO):
         self.loop = loop
         self.pending: dict[str, asyncio.Future] = {}
 
-    def on_token(self, text: str) -> None:
-        # Called from the LLM worker thread -> hop back onto the event loop.
-        asyncio.run_coroutine_threadsafe(self.ws.send_json(ev.token(text)), self.loop)
+    def emit_sync(self, event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(self._safe_send(event), self.loop)
+
+    async def _safe_send(self, event: dict) -> None:
+        try:
+            await self.ws.send_json(event)
+        except Exception:
+            pass
 
     async def emit(self, event: dict) -> None:
-        await self.ws.send_json(event)
+        await self._safe_send(event)
 
     async def request_approval(self, request: dict) -> ApprovalDecision:
         fut: asyncio.Future = self.loop.create_future()
@@ -53,21 +71,16 @@ class WebSocketIO(AgentIO):
         fut = self.pending.pop(data.get("id"), None)
         if fut and not fut.done():
             fut.set_result(
-                ApprovalDecision(
-                    approved=bool(data.get("approved", False)),
-                    feedback=data.get("feedback"),
-                )
+                ApprovalDecision(bool(data.get("approved", False)), data.get("feedback"))
             )
 
 
-def _config_for(
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-) -> Config:
+def _config_for(data: dict) -> Config:
     return load_config(
-        provider=provider, model=model, api_key=api_key, base_url=base_url
+        provider=data.get("provider"),
+        model=data.get("model"),
+        api_key=data.get("api_key"),
+        base_url=data.get("base_url"),
     )
 
 
@@ -85,17 +98,19 @@ async def ws_endpoint(ws: WebSocket):
             kind = data.get("type")
 
             if kind == "init":
-                cfg = _config_for(
-                    data.get("provider"),
-                    data.get("model"),
-                    data.get("api_key"),
-                    data.get("base_url"),
+                if not _auth_ok(data.get("token")):
+                    await ws.send_json(ev.error("Unauthorized: bad or missing token."))
+                    await ws.close()
+                    return
+                cfg = _config_for(data)
+                if data.get("auto_approve"):
+                    cfg.agent.auto_approve_writes = True
+                    cfg.agent.auto_approve_commands = True
+                session = AgentSession(
+                    data["workspace_path"], cfg, io, persist=bool(data.get("persist"))
                 )
-                session = AgentSession(data["workspace_path"], cfg, io)
                 await ws.send_json(
-                    ev.status(
-                        f"ready · provider={cfg.provider.name} · model={cfg.provider.model}"
-                    )
+                    ev.status(f"ready · {cfg.provider.name} · {cfg.provider.model}")
                 )
 
             elif kind == "run":
@@ -110,6 +125,21 @@ async def ws_endpoint(ws: WebSocket):
             elif kind == "approval":
                 io.resolve_approval(data)
 
+            elif kind == "cancel":
+                if session:
+                    session.cancel()
+
+            elif kind == "undo":
+                if session:
+                    reverted = session.undo()
+                    await ws.send_json(
+                        ev.info(
+                            f"reverted {len(reverted)} file(s): {', '.join(reverted)}"
+                            if reverted
+                            else "nothing to undo"
+                        )
+                    )
+
             elif kind == "ping":
                 await ws.send_json({"type": "pong"})
 
@@ -118,21 +148,21 @@ async def ws_endpoint(ws: WebSocket):
 
     except WebSocketDisconnect:
         if running and not running.done():
+            if session:
+                session.cancel()
             running.cancel()
 
 
 # --------------------------------------------------------------------------- #
-# REST fallback (one-shot, non-interactive — auto-approves per config)
+# REST fallback (one-shot, non-interactive)
 # --------------------------------------------------------------------------- #
 class BufferIO(AgentIO):
-    """Collects events for a single non-interactive request."""
-
     def __init__(self, auto_approve: bool):
         self.events: list[dict] = []
         self.auto_approve = auto_approve
 
-    def on_token(self, text: str) -> None:  # ignored; REST returns final state
-        pass
+    def emit_sync(self, event: dict) -> None:
+        self.events.append(event)
 
     async def emit(self, event: dict) -> None:
         self.events.append(event)
@@ -153,20 +183,28 @@ class RunRequest(BaseModel):
 
 
 @app.post("/agent/run")
-async def agent_run(req: RunRequest):
-    cfg = _config_for(req.provider, req.model, req.api_key, req.base_url)
+async def agent_run(req: RunRequest, authorization: Optional[str] = Header(default=None)):
+    token = authorization.replace("Bearer ", "") if authorization else None
+    if not _auth_ok(token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    cfg = load_config(
+        provider=req.provider, model=req.model, api_key=req.api_key, base_url=req.base_url
+    )
+    if req.auto_approve:
+        cfg.agent.auto_approve_writes = True
+        cfg.agent.auto_approve_commands = True
     io = BufferIO(auto_approve=req.auto_approve)
     session = AgentSession(req.workspace_path, cfg, io)
     await session.run(req.task)
     final = next(
-        (e["text"] for e in reversed(io.events) if e["type"] == "assistant_message"),
-        "",
+        (e["text"] for e in reversed(io.events) if e["type"] == "assistant_message"), ""
     )
     return {
         "status": "ok",
         "provider": cfg.provider.name,
         "model": cfg.provider.model,
         "final": final,
+        "session_tokens": session.session_tokens,
         "events": io.events,
     }
 
@@ -188,29 +226,42 @@ async def providers():
     }
 
 
+# --------------------------------------------------------------------------- #
+# Server entry
+# --------------------------------------------------------------------------- #
 def _free_port(host: str) -> int:
     import socket
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind((host, 0))
+    s.bind((host if host != "0.0.0.0" else "", 0))
     port = s.getsockname()[1]
     s.close()
     return port
 
 
-def serve(host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    reload: bool = False,
+    token: Optional[str] = None,
+    auth: bool = True,
+) -> None:
     import uvicorn
 
     if port == 0:
         port = _free_port(host)
 
-    # Announce the bound port on stdout so a parent process (the VS Code
-    # extension) can discover it when --port 0 was requested.
+    # Resolve the auth token: explicit > env > generated (unless auth disabled).
+    resolved = token or os.getenv("EURON_AGENT_TOKEN")
+    if auth and not resolved:
+        resolved = secrets.token_urlsafe(24)
+    app.state.token = resolved if auth else None
+
+    # Announce port (and token) on stdout so a parent process can discover them.
     print(f"EURON_AGENT_LISTENING http://{host}:{port}", flush=True)
+    if app.state.token:
+        print(f"EURON_AGENT_TOKEN {app.state.token}", flush=True)
 
     uvicorn.run(
-        "euron_agent.server:app" if reload else app,
-        host=host,
-        port=port,
-        reload=reload,
+        "euron_agent.server:app" if reload else app, host=host, port=port, reload=reload
     )

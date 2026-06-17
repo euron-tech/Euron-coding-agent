@@ -11,10 +11,36 @@ body {
   flex-direction: column;
   height: 100vh;
 }
+#topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border, #444);
+  font-size: 0.8em;
+  color: var(--vscode-descriptionForeground);
+}
+#topbar button {
+  padding: 2px 8px;
+  font-size: 0.85em;
+}
 #log {
   flex: 1;
   overflow-y: auto;
   padding: 10px;
+}
+.msg.cmdout {
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.82em;
+  white-space: pre-wrap;
+  background: var(--vscode-textCodeBlock-background);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--vscode-descriptionForeground);
+}
+#stop {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
 }
 .msg {
   margin: 6px 0;

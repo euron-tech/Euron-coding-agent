@@ -95,6 +95,19 @@ class TerminalIO(AgentIO):
             )
         elif t == "info":
             console.print(f"[dim]ℹ {event['message']}[/dim]")
+        elif t == "thinking":
+            console.print(f"[dim]💭 {event['text']}[/dim]")
+        elif t == "plan":
+            console.print(Panel(event["text"], title="Proposed plan", border_style="magenta"))
+        elif t == "todos":
+            marks = {"completed": "[green]✔[/green]", "in_progress": "[yellow]▸[/yellow]", "pending": "[dim]○[/dim]"}
+            console.print("[bold]Tasks:[/bold]")
+            for item in event["items"]:
+                console.print(f"  {marks.get(item.get('status'), '○')} {item.get('content', '')}")
+        elif t == "subagent_start":
+            console.print(f"[cyan]↳ sub-agent:[/cyan] {event['description']}")
+        elif t == "subagent_end":
+            console.print(f"[cyan]↳ sub-agent done[/cyan] [dim]{event['summary']}[/dim]")
         elif t == "cancelled":
             console.print("[yellow]■ cancelled[/yellow]")
         elif t == "done":
@@ -206,6 +219,8 @@ HELP = """[bold]commands[/bold]
   /baseurl [url]     set a custom base URL (self-hosted / custom endpoints)
   /config            show current provider, model, base URL, key status
   /providers         list known providers
+  /plan              plan mode for the next task (research → approve → execute)
+  /compact           summarize the conversation to free up context
   /undo              revert the file changes from the last task
   /reset             clear the conversation context
   /yes               toggle auto-approve for edits & commands
@@ -253,6 +268,18 @@ async def _handle_command(line: str, session: AgentSession, args, io: TerminalIO
         return "exit"
     if cmd == "/help":
         console.print(HELP)
+    elif cmd == "/plan":
+        session.plan_mode = True
+        console.print("[magenta]plan mode ON[/magenta] — your next task will research & propose a plan first.")
+    elif cmd == "/compact":
+        from .context import summarize_history
+
+        new, changed = summarize_history(session.client, session.messages)
+        if changed:
+            session.messages = new
+            console.print("[green]conversation compacted[/green]")
+        else:
+            console.print("[dim]nothing to compact yet[/dim]")
     elif cmd == "/undo":
         reverted = session.undo()
         if reverted:

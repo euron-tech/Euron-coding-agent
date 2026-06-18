@@ -54,8 +54,15 @@ backend/
     prompts.py         # the system prompt
     tool_schemas.py    # function-calling schemas + which tools need approval
     tools.py           # sandboxed tool implementations + diff/preview generation
-    loop.py            # AgentSession — the agentic loop
-    server.py          # FastAPI: /ws (streaming+approval) + REST + dynamic port
+    loop.py            # AgentSession — the agentic loop (plan mode, subagents, MCP)
+    context.py         # token estimate, @mention expansion, compaction, summarize
+    checkpoints.py     # per-turn file snapshots → undo
+    history.py         # persist conversation per workspace
+    settings.py        # ~/.euron-agent user settings (CLI)
+    webtools.py        # web_search (pluggable) + web_fetch
+    background.py      # long-running background process manager
+    mcp_client.py      # MCP server client → external tools (optional)
+    server.py          # FastAPI: /ws (streaming+approval) + REST + dynamic port + auth
     cli.py             # run / chat / serve / providers / init  (+ TerminalIO)
   pyproject.toml       # packaging → PyPI dist "euron-coding-agent", CLI "euron-agent"
   requirements.txt
@@ -288,14 +295,35 @@ explicit CLI/extension overrides. Any OpenAI-compatible endpoint works by settin
 - ✅ A real **pytest** suite (`backend/tests/`); packaging + CI/CD to PyPI,
   Marketplace, Open VSX.
 
-### Still on the roadmap
-- ❌ Edits write to disk directly (undo is via the built-in checkpointer, **not**
-  VS Code's native `WorkspaceEdit`/editor undo or git).
-- ❌ Context compaction trims old tool output but has **no semantic summarization,
-  RAG, or embeddings** for very large repos.
-- ❌ No usage **cost** estimation (token counts only) and no telemetry.
-- ❌ Cancellation takes effect at the next step boundary (it can't abort a single
-  in-flight model response mid-stream).
+**0.3.0 — Claude-Code-style capabilities (model-agnostic):**
+- ✅ **Plan mode** — read-only research → `update_plan` (approve) → execute.
+- ✅ **Sub-agents** — `spawn_agent` delegates focused sub-tasks (own context,
+  optional cheaper `subagent_model`), depth-bounded.
+- ✅ **TODO checklist** — `todo_write`, streamed to CLI + webview.
+- ✅ **MCP client** — connect stdio/SSE MCP servers; tools exposed as
+  `mcp__server__tool` (optional `[mcp]` extra).
+- ✅ **Web tools** — `web_search` (DuckDuckGo / Tavily / Brave / SerpAPI) +
+  `web_fetch`.
+- ✅ **More tools** — `glob`, `multi_edit` (atomic), background processes,
+  `git_status`/`git_diff`/`git_commit`.
+- ✅ **`/compact`** — LLM summarization of older turns.
+
+### Roadmap (0.4.0 — Phases 3–4)
+- ◻ **Project memory** (`AGENTS.md`/`EURON.md` auto-loaded) and **custom slash
+  commands** (`.euron/commands/*.md`).
+- ◻ **Hooks** (PreToolUse/PostToolUse/Stop) and a **permissions engine**
+  (allow/ask/deny by tool+glob) replacing the coarse auto-approve flags.
+- ◻ **Extended thinking** (provider-native where available) surfaced in the UI.
+- ◻ **Multimodal image input** to vision models; **cost** estimation (pricing).
+- ◻ **Richer webview** (markdown + highlighted diffs, `@file` autocomplete,
+  in-panel model picker), and an editor-native diagnostics loop.
+
+### Intentionally out of scope (to stay light & model-agnostic)
+- ❌ Anthropic-locked features as hard deps (prompt caching, server-side web
+  search, computer-use, citations) — we ship provider-neutral equivalents.
+- ❌ Vector-DB / embeddings RAG as a core dependency (retrieval = ripgrep +
+  agentic search, like Claude Code).
+- ❌ Hosted cloud service / accounts / billing; telemetry; non-VS-Code IDEs.
 
 ---
 

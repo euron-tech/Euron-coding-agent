@@ -515,6 +515,48 @@ publishes to PyPI, the Marketplace, and Open VSX.
 
 ---
 
+## Phase H — capability modules (added in 0.2–0.3)
+
+These extend the brain without changing its core shape. Read them after `loop.py`.
+
+### `context.py`
+- `estimate_tokens` (≈4 chars/token), `expand_mentions` (inline `@file`),
+  `compact_history` (trim oldest tool output when over budget), and
+  `summarize_history` (LLM-written summary for `/compact`). **Keeps the model
+  inside its window without a vector DB.**
+
+### `checkpoints.py`
+- `Checkpointer` snapshots files before each mutation, grouped per turn;
+  `undo_last_turn()` reverts them. **The Undo button / `/undo`.**
+
+### `history.py`
+- Save/load conversation per workspace under `~/.euron-agent/sessions/`.
+  **Persistence across restarts.**
+
+### `settings.py`
+- The `~/.euron-agent/config.json` store for the CLI's `/provider` `/key`
+  `/model`. **Why the CLI remembers you.**
+
+### `webtools.py`
+- `web_search` (pluggable: DuckDuckGo keyless, or Tavily/Brave/SerpAPI) and
+  `web_fetch` (HTML → readable text). **Our own web tools — no provider lock-in.**
+
+### `background.py`
+- `BackgroundManager` runs long-lived commands (dev servers), buffering output
+  for `process_output`/`process_list`/`process_kill`. **Non-blocking processes.**
+
+### `mcp_client.py`
+- `MCPManager` connects external **MCP** servers (stdio/SSE), lists their tools,
+  exposes them as `mcp__server__tool`, and routes calls. Fully optional/guarded.
+  **The universal, model-independent tool-extensibility layer.**
+
+### What changed in `loop.py`
+- **Plan mode** (restricted tools + `update_plan` approval), **sub-agents**
+  (`spawn_agent` runs a nested `AgentSession` with a forwarding IO), the **TODO**
+  meta-tool, and **MCP routing** — all woven into the same act step. New tools
+  (`glob`, `multi_edit`, web, background, git) are plain entries in
+  `tools.TOOL_FUNCS`; meta-tools live in `tool_schemas.LOOP_TOOLS`.
+
 ## How to give the 60-second version (for a meeting)
 
 1. "It's an agentic coding assistant with the brain in **Python** and a thin **VS

@@ -30,10 +30,18 @@ class ToolOutcome:
 
 
 class ToolContext:
-    def __init__(self, workspace: str, agent_cfg: AgentConfig, ignore: list[str]):
+    def __init__(
+        self,
+        workspace: str,
+        agent_cfg: AgentConfig,
+        ignore: list[str],
+        web: Optional[dict] = None,
+    ):
         self.root = Path(workspace).resolve()
         self.cfg = agent_cfg
         self.ignore = ignore
+        # web search backend, e.g. {"provider": "duckduckgo", "api_key": ""}
+        self.web = web or {}
 
     # --- sandbox helpers --------------------------------------------------- #
     def resolve(self, rel: str) -> Path:
@@ -168,6 +176,26 @@ def search_text(ctx: ToolContext, query: str, glob: Optional[str] = None) -> Too
     return ToolOutcome("\n".join(hits) if hits else "(no matches)")
 
 
+def glob_files(ctx: ToolContext, pattern: str, path: str = ".") -> ToolOutcome:
+    """Find files by glob pattern (supports ** for recursion)."""
+    base = ctx.resolve(path)
+    if not base.exists():
+        return ToolOutcome(f"Path not found: {path}", ok=False)
+    matches: list[str] = []
+    try:
+        for p in sorted(base.glob(pattern)):
+            if p.is_file():
+                rel = ctx.rel(p)
+                if not ctx.is_ignored(rel):
+                    matches.append(rel)
+            if len(matches) >= 500:
+                matches.append("... (truncated)")
+                break
+    except Exception as e:  # noqa: BLE001
+        return ToolOutcome(f"glob error: {e}", ok=False)
+    return ToolOutcome("\n".join(matches) if matches else "(no matches)")
+
+
 # --------------------------------------------------------------------------- #
 # Mutating tools (gated by approval in the loop)
 # --------------------------------------------------------------------------- #
@@ -236,6 +264,40 @@ def edit_file(
     full.write_text(after, encoding="utf-8")
     n = count if replace_all else 1
     return ToolOutcome(f"Edited {path} ({n} replacement(s)).", diff=patch)
+
+
+def _apply_edits(before: str, edits: list, path: str):
+    """Apply a list of {old_string,new_string,replace_all} edits. Returns
+    (after, error). `error` is None on success."""
+    text = before
+    for i, e in enumerate(edits):
+        old = e.get("old_string", "")
+        new = e.get("new_string", "")
+        if not old:
+            return text, f"edit {i}: empty old_string"
+        cnt = text.count(old)
+        if cnt == 0:
+            return text, f"edit {i}: old_string not found in {path}"
+        if cnt > 1 and not e.get("replace_all"):
+            return text, f"edit {i}: old_string not unique ({cnt}); add context or replace_all"
+        text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+    return text, None
+
+
+def multi_edit(ctx: ToolContext, path: str, edits: list) -> ToolOutcome:
+    """Apply several edits to one file atomically (all-or-nothing)."""
+    if ctx.is_ignored(path):
+        return ToolOutcome(f"Refusing to edit ignored/secret path: {path}", ok=False)
+    full = ctx.resolve(path)
+    if not full.is_file():
+        return ToolOutcome(f"File not found: {path}", ok=False)
+    before = full.read_text(encoding="utf-8", errors="replace")
+    after, err = _apply_edits(before, edits or [], path)
+    if err:
+        return ToolOutcome(err, ok=False)
+    patch = _unified(path, before, after)
+    full.write_text(after, encoding="utf-8")
+    return ToolOutcome(f"Applied {len(edits)} edit(s) to {path}.", diff=patch)
 
 
 def create_file(ctx: ToolContext, path: str, content: str) -> ToolOutcome:
@@ -314,17 +376,95 @@ def run_command(
 
 
 # --------------------------------------------------------------------------- #
+# Web tools
+# --------------------------------------------------------------------------- #
+def web_fetch(ctx: ToolContext, url: str) -> ToolOutcome:
+    from . import webtools
+
+    ok, text = webtools.web_fetch(url, max_chars=ctx.cfg.max_file_bytes)
+    return ToolOutcome(text, ok=ok)
+
+
+def web_search(ctx: ToolContext, query: str) -> ToolOutcome:
+    from . import webtools
+
+    provider = ctx.web.get("provider", "duckduckgo")
+    ok, text = webtools.web_search(query, provider=provider, api_key=ctx.web.get("api_key", ""))
+    return ToolOutcome(text, ok=ok)
+
+
+# --------------------------------------------------------------------------- #
+# Background processes
+# --------------------------------------------------------------------------- #
+def bash_background(ctx: ToolContext, command: str) -> ToolOutcome:
+    from .background import manager
+
+    pid = manager.start(str(ctx.root), command)
+    return ToolOutcome(f"Started background process {pid}: {command}")
+
+
+def process_output(ctx: ToolContext, id: str, tail: int = 100) -> ToolOutcome:
+    from .background import manager
+
+    return ToolOutcome(manager.output(id, tail))
+
+
+def process_kill(ctx: ToolContext, id: str) -> ToolOutcome:
+    from .background import manager
+
+    return ToolOutcome(manager.kill(id))
+
+
+def process_list(ctx: ToolContext) -> ToolOutcome:
+    from .background import manager
+
+    return ToolOutcome(manager.list_())
+
+
+# --------------------------------------------------------------------------- #
+# Git helpers (thin, safe wrappers)
+# --------------------------------------------------------------------------- #
+def _git(ctx: ToolContext, args: str) -> ToolOutcome:
+    return run_command(ctx, f"git {args}")
+
+
+def git_status(ctx: ToolContext) -> ToolOutcome:
+    return _git(ctx, "status --short --branch")
+
+
+def git_diff(ctx: ToolContext, path: str = "") -> ToolOutcome:
+    return _git(ctx, f"diff -- {path}" if path else "diff")
+
+
+def git_commit(ctx: ToolContext, message: str, all: bool = True) -> ToolOutcome:
+    safe = message.replace('"', '\\"')
+    add = "git add -A && " if all else ""
+    return run_command(ctx, f'{add}git commit -m "{safe}"')
+
+
+# --------------------------------------------------------------------------- #
 # Dispatch table
 # --------------------------------------------------------------------------- #
 TOOL_FUNCS = {
     "list_files": list_files,
     "read_file": read_file,
     "search_text": search_text,
+    "glob": glob_files,
     "write_file": write_file,
     "edit_file": edit_file,
+    "multi_edit": multi_edit,
     "create_file": create_file,
     "delete_file": delete_file,
     "run_command": run_command,
+    "web_fetch": web_fetch,
+    "web_search": web_search,
+    "bash_background": bash_background,
+    "process_output": process_output,
+    "process_kill": process_kill,
+    "process_list": process_list,
+    "git_status": git_status,
+    "git_diff": git_diff,
+    "git_commit": git_commit,
 }
 
 
@@ -344,10 +484,21 @@ def preview_for(ctx: ToolContext, name: str, args: dict) -> Optional[str]:
                 return f"⚠ old_string not found in {args['path']}"
             after = before.replace(old, new, -1 if args.get("replace_all") else 1)
             return _unified(args["path"], before, after)
+        if name == "multi_edit":
+            full = ctx.resolve(args["path"])
+            if not full.is_file():
+                return f"(edit target missing: {args['path']})"
+            before = full.read_text(encoding="utf-8", errors="replace")
+            after, err = _apply_edits(before, args.get("edits", []), args["path"])
+            return _unified(args["path"], before, after) if not err else f"⚠ {err}"
         if name == "delete_file":
             return f"DELETE {args.get('path')}"
         if name == "run_command":
             return f"$ {args.get('command')}"
+        if name == "bash_background":
+            return f"$ {args.get('command')}  (background)"
+        if name == "git_commit":
+            return f"git commit -m \"{args.get('message', '')}\""
     except Exception as e:  # noqa: BLE001
         return f"(could not build preview: {e})"
     return None

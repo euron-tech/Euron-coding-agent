@@ -25,6 +25,18 @@ VS Code webview ──postMessage──> Extension host ──WebSocket──> P
 - **Tight, plan-first system prompt** and only-what's-needed context.
 - **Approval gating with diffs** — nothing is written or executed without your OK.
 
+## Claude-Code-style capabilities (model-agnostic)
+
+- **Plan mode** · **sub-agents** (`spawn_agent`) · live **TODO checklist**
+- **MCP** — connect any Model Context Protocol server (`pip install
+  "euron-coding-agent[mcp]"`); tools appear as `mcp__server__tool`
+- **Web** `web_search` + `web_fetch` · **git** tools · **background** processes
+- `glob`, `multi_edit`, streaming command output, `@file` mentions
+- **Undo/checkpoints**, **cancel/stop**, **persistent history**, **`/compact`**
+- **Cloud/self-host**: `serve --host 0.0.0.0 --token …` with bearer auth
+- Works with **any** OpenAI-compatible or Anthropic model; capabilities degrade
+  gracefully when a model lacks them.
+
 ---
 
 ## 1. Backend (Python)

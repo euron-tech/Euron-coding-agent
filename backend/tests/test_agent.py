@@ -286,3 +286,166 @@ def test_loop_persist_roundtrip(tmp_path, monkeypatch):
     # a new session with persist should reload the prior messages
     sess2, _ = make_session(tmp_path, [LLMResponse(content="again", tool_calls=[])], persist=True)
     assert any(m.get("content") == "hello" for m in sess2.messages)
+
+
+# --------------------------------------------------------------------------- #
+# new tools: glob / multi_edit / background / git / web
+# --------------------------------------------------------------------------- #
+def test_glob(tmp_path):
+    from euron_agent.tools import glob_files
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("y", encoding="utf-8")
+    out = glob_files(ctx_for(tmp_path), "**/*.py")
+    assert "src/a.py" in out.output
+
+
+def test_multi_edit_atomic(tmp_path):
+    from euron_agent.tools import multi_edit
+    ctx = ctx_for(tmp_path)
+    f = tmp_path / "m.py"
+    f.write_text("a\nb\nc\n", encoding="utf-8")
+    ok = multi_edit(ctx, "m.py", [
+        {"old_string": "a", "new_string": "x"},
+        {"old_string": "c", "new_string": "z"},
+    ])
+    assert ok.ok and f.read_text() == "x\nb\nz\n"
+    # atomic: a failing edit leaves the file untouched
+    f.write_text("a\nb\n", encoding="utf-8")
+    bad = multi_edit(ctx, "m.py", [
+        {"old_string": "a", "new_string": "x"},
+        {"old_string": "NOPE", "new_string": "z"},
+    ])
+    assert not bad.ok and f.read_text() == "a\nb\n"
+
+
+def test_background_manager(tmp_path):
+    import time
+    from euron_agent.background import BackgroundManager
+    m = BackgroundManager()
+    pid = m.start(str(tmp_path), "echo hello")
+    time.sleep(0.5)
+    out = m.output(pid)
+    assert "hello" in out or "exited" in out
+    assert pid in m.list_()
+    m.kill(pid)
+
+
+def test_git_tools(tmp_path):
+    import subprocess
+    for c in ("git init -q", "git config user.email t@t.com", "git config user.name t"):
+        subprocess.run(c, cwd=tmp_path, shell=True)
+    (tmp_path / "f.txt").write_text("hi", encoding="utf-8")
+    from euron_agent.tools import git_status, git_commit
+    ctx = ctx_for(tmp_path)
+    assert "f.txt" in git_status(ctx).output
+    assert git_commit(ctx, "init").ok
+
+
+def test_web_helpers(monkeypatch):
+    import euron_agent.webtools as wt
+    assert "hello" in wt._strip_html("<p>hello <b>world</b></p>")
+    ok, text = wt._fmt([{"title": "T", "url": "http://x", "snippet": "S"}])
+    assert ok and "T" in text and "http://x" in text
+
+    class R:
+        status_code = 200
+        headers = {"content-type": "text/html"}
+        text = "<html><body>PAGE_CONTENT</body></html>"
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(wt.httpx, "get", lambda *a, **k: R())
+    ok, text = wt.web_fetch("http://x")
+    assert ok and "PAGE_CONTENT" in text
+
+
+# --------------------------------------------------------------------------- #
+# meta tools: todo / plan mode / sub-agents / compact / mcp
+# --------------------------------------------------------------------------- #
+def test_todo_write(tmp_path):
+    responses = [
+        LLMResponse(content="", tool_calls=[ToolCall("1", "todo_write", {"todos": [
+            {"content": "a", "status": "in_progress"},
+            {"content": "b", "status": "pending"}]})]),
+        LLMResponse(content="ok", tool_calls=[]),
+    ]
+    sess, io = make_session(tmp_path, responses)
+    run(sess.run("multi step"))
+    assert any(e["type"] == "todos" for e in io.events)
+    assert sess.todos and sess.todos[0]["content"] == "a"
+
+
+def test_plan_mode_approval(tmp_path):
+    responses = [
+        LLMResponse(content="here's my plan", tool_calls=[
+            ToolCall("1", "update_plan", {"plan": "1. do x\n2. do y"})]),
+        LLMResponse(content="implementing", tool_calls=[]),
+    ]
+    sess, io = make_session(tmp_path, responses, approve=True)
+    sess.plan_mode = True
+    run(sess.run("build feature"))
+    assert any(e["type"] == "plan" for e in io.events)
+    assert sess.plan_mode is False  # approved → plan mode turns off
+
+
+def test_subagent(tmp_path, monkeypatch):
+    import euron_agent.loop as loopmod
+    monkeypatch.setattr(
+        loopmod, "build_client",
+        lambda p, a=None: ScriptedClient([LLMResponse(content="sub-agent analysis result", tool_calls=[])]),
+    )
+    parent = [
+        LLMResponse(content="", tool_calls=[ToolCall("1", "spawn_agent", {
+            "description": "analyze", "prompt": "analyze the repo"})]),
+        LLMResponse(content="done", tool_calls=[]),
+    ]
+    cfg = load_config(provider="openai", api_key="x")
+    io = CollectIO()
+    sess = AgentSession(str(tmp_path), cfg, io)
+    sess.client = ScriptedClient(parent)
+    run(sess.run("delegate"))
+    assert any(e["type"] == "subagent_start" for e in io.events)
+    assert any(e["type"] == "subagent_end" for e in io.events)
+    assert any("analysis result" in (m.get("content") or "")
+               for m in sess.messages if m.get("role") == "tool")
+
+
+def test_compact_summarize():
+    from euron_agent.context import summarize_history
+    client = ScriptedClient([LLMResponse(content="SUMMARY_BRIEF", tool_calls=[])])
+    msgs = [{"role": "system", "content": "s"}]
+    for _ in range(5):
+        msgs.append({"role": "user", "content": "do x"})
+        msgs.append({"role": "assistant", "content": "did x"})
+    new, changed = summarize_history(client, msgs, keep_recent=2)
+    assert changed
+    assert any("SUMMARY_BRIEF" in (m.get("content") or "") for m in new)
+    assert new[0]["content"] == "s"
+
+
+def test_mcp_routing(tmp_path):
+    class FakeMCP:
+        started = True
+        errors = []
+
+        def schemas(self):
+            return [{"type": "function", "function": {
+                "name": "mcp__srv__do", "description": "", "parameters": {"type": "object"}}}]
+
+        async def start(self):
+            pass
+
+        async def call(self, name, args):
+            return f"mcp ok {name}"
+
+    responses = [
+        LLMResponse(content="", tool_calls=[ToolCall("1", "mcp__srv__do", {"x": 1})]),
+        LLMResponse(content="done", tool_calls=[]),
+    ]
+    sess, io = make_session(tmp_path, responses, approve=True)
+    sess.mcp = FakeMCP()
+    run(sess.run("use mcp"))
+    assert any("mcp ok" in (m.get("content") or "")
+               for m in sess.messages if m.get("role") == "tool")

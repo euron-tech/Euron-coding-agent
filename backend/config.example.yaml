@@ -74,6 +74,27 @@ agent:
   max_file_bytes: 120000     # don't feed files larger than this to the model
   max_command_seconds: 60
 
+# Model used for sub-agents (spawn_agent). Empty = same as the main model.
+# A cheaper/faster model here saves cost on delegated sub-tasks.
+subagent_model: null
+
+# Web search backend for the web_search tool. Default is keyless DuckDuckGo.
+# For better results set an API key env var (TAVILY_API_KEY / BRAVE_API_KEY /
+# SERPAPI_API_KEY) and it's auto-detected, or pin it here:
+web:
+  provider: duckduckgo        # duckduckgo | tavily | brave | serpapi
+  api_key_env: null           # e.g. TAVILY_API_KEY
+
+# MCP (Model Context Protocol) servers — their tools become available to the
+# agent as mcp__<server>__<tool>. Requires: pip install "euron-coding-agent[mcp]".
+mcp:
+  servers: {}
+    # filesystem:
+    #   command: npx
+    #   args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    # remote:
+    #   url: https://example.com/mcp   # SSE/HTTP endpoint
+
 # Files the agent must never read or write (globs, matched against rel path).
 ignore:
   - ".git/**"

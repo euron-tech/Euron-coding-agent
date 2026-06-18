@@ -82,6 +82,29 @@ def info(message: str) -> dict:
     return {"type": "info", "message": message}
 
 
+def thinking(text: str) -> dict:
+    """A streamed chunk of the model's reasoning."""
+    return {"type": "thinking", "text": text}
+
+
+def plan(text: str) -> dict:
+    """A proposed plan emitted in plan mode, awaiting approval."""
+    return {"type": "plan", "text": text}
+
+
+def todos(items: list) -> dict:
+    """The agent's current task checklist."""
+    return {"type": "todos", "items": items}
+
+
+def subagent_start(call_id: str, description: str) -> dict:
+    return {"type": "subagent_start", "id": call_id, "description": description}
+
+
+def subagent_end(call_id: str, summary: str) -> dict:
+    return {"type": "subagent_end", "id": call_id, "summary": summary}
+
+
 # --------------------------------------------------------------------------- #
 # Approval decision + IO interface
 # --------------------------------------------------------------------------- #

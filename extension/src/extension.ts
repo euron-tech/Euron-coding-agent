@@ -34,6 +34,7 @@ const KEY_BASEURL = 'euronAgent.baseUrl';
 const KEY_MODEL = 'euronAgent.customModel';
 const KEY_AUTOAPPROVE = 'euronAgent.autoApprove';
 const KEY_WORKSPACE = 'euronAgent.workspace';
+const KEY_PLAN = 'euronAgent.planMode';
 const secretKeyFor = (provider: string) => `euronAgent.apiKey:${provider}`;
 
 function providerMeta(id: string): ProviderMeta {
@@ -67,6 +68,13 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('euronAgent.stop', () => provider.stopTask()),
     vscode.commands.registerCommand('euronAgent.undo', () => provider.undo()),
+    vscode.commands.registerCommand('euronAgent.togglePlanMode', async () => {
+      const cur = context.globalState.get<boolean>(KEY_PLAN) || false;
+      await context.globalState.update(KEY_PLAN, !cur);
+      vscode.window.showInformationMessage(
+        `Euron Agent plan mode: ${!cur ? 'ON (next task plans first)' : 'off'}`
+      );
+    }),
     vscode.commands.registerCommand('euronAgent.toggleAutoApprove', async () => {
       const cur = context.globalState.get<boolean>(KEY_AUTOAPPROVE) || false;
       await context.globalState.update(KEY_AUTOAPPROVE, !cur);
@@ -178,7 +186,8 @@ async function buildInitPayload(
     base_url: meta.custom ? context.globalState.get<string>(KEY_BASEURL) : undefined,
     model: settingModel || (meta.custom ? customModel : undefined) || undefined,
     auto_approve: context.globalState.get<boolean>(KEY_AUTOAPPROVE) || false,
-    persist: cfg.get<boolean>('persistHistory') ?? true
+    persist: cfg.get<boolean>('persistHistory') ?? true,
+    plan_mode: context.globalState.get<boolean>(KEY_PLAN) || false
   };
 }
 

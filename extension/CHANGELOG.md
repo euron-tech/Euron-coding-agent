@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+Claude-Code-style capabilities (Phases 1–2), staying model-agnostic.
+
+- **Plan mode** — research read-only, propose a plan, approve, then execute
+  (toolbar toggle / CLI `/plan`).
+- **Sub-agents** — `spawn_agent` delegates focused sub-tasks (optional cheaper
+  `subagent_model`); activity streamed to the panel.
+- **TODO checklist** — live task list rendered in the panel and CLI.
+- **MCP** — connect Model Context Protocol servers; their tools appear as
+  `mcp__server__tool` (install `euron-coding-agent[mcp]`).
+- **Web tools** — `web_search` (DuckDuckGo keyless, or Tavily/Brave/SerpAPI) and
+  `web_fetch`.
+- **More tools** — `glob`, `multi_edit` (atomic), background processes
+  (`bash_background`/`process_*`), and `git_status`/`git_diff`/`git_commit`.
+- **`/compact`** — LLM-summarize the conversation to free context.
+
 ## 0.2.0
 
 Big feature release — the whole "not yet implemented" roadmap, plus a cloud posture.

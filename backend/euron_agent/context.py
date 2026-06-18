@@ -72,3 +72,54 @@ def compact_history(messages: list[dict], max_tokens: int, keep_recent: int = 6)
             m["content"] = _TRIM_NOTE
             changed = True
     return out, changed
+
+
+_SUMMARY_SYS = (
+    "Summarize this coding-session transcript into a concise brief a developer "
+    "needs to continue: decisions made, files changed, current state, and what's "
+    "left. Be factual and specific; no fluff."
+)
+
+
+def summarize_history(client, messages: list[dict], keep_recent: int = 4):
+    """Replace the middle of the conversation with an LLM-written summary.
+    Returns (new_messages, changed). Preserves assistant→tool message pairing.
+    """
+    if len(messages) <= keep_recent + 2:
+        return messages, False
+    system = messages[0]
+    cut = len(messages) - keep_recent
+    while cut > 1 and messages[cut].get("role") == "tool":
+        cut -= 1
+    middle = messages[1:cut]
+    recent = messages[cut:]
+    if not middle:
+        return messages, False
+
+    lines = []
+    for m in middle:
+        role = m.get("role", "?")
+        content = m.get("content") or ""
+        if m.get("tool_calls"):
+            names = ", ".join(tc["function"]["name"] for tc in m["tool_calls"])
+            content = (content + f" [called: {names}]").strip()
+        lines.append(f"{role}: {content}")
+    transcript = "\n".join(lines)[:12000]
+
+    try:
+        resp = client.chat(
+            [
+                {"role": "system", "content": _SUMMARY_SYS},
+                {"role": "user", "content": transcript},
+            ],
+            None,
+            None,
+            False,
+        )
+        summary = resp.content
+    except Exception:
+        return messages, False
+
+    new = [system, {"role": "user", "content": "[Summary of earlier conversation]\n" + summary}]
+    new += recent
+    return new, True

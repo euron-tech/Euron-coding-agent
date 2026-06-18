@@ -60,6 +60,9 @@ class Config:
     agent: AgentConfig
     ignore: list[str] = field(default_factory=list)
     all_providers: dict[str, ProviderConfig] = field(default_factory=dict)
+    mcp_servers: dict = field(default_factory=dict)
+    web: dict = field(default_factory=dict)
+    subagent_model: Optional[str] = None
 
 
 DEFAULT_IGNORE = [
@@ -208,9 +211,30 @@ def load_config(
 
     ignore = raw.get("ignore") or DEFAULT_IGNORE
 
+    mcp_servers = (raw.get("mcp", {}) or {}).get("servers", {}) or {}
+
+    web = dict(raw.get("web", {}) or {})
+    if not web.get("provider"):
+        # auto-detect a search backend from env (TAVILY/BRAVE/SERPAPI), else keyless
+        for env_key, name in (
+            ("TAVILY_API_KEY", "tavily"),
+            ("BRAVE_API_KEY", "brave"),
+            ("SERPAPI_API_KEY", "serpapi"),
+        ):
+            if os.getenv(env_key):
+                web = {"provider": name, "api_key": os.environ[env_key]}
+                break
+        else:
+            web = {"provider": "duckduckgo", "api_key": ""}
+    elif web.get("api_key_env"):
+        web["api_key"] = os.getenv(web["api_key_env"], "")
+
     return Config(
         provider=selected,
         agent=agent,
         ignore=list(ignore),
         all_providers=all_providers,
+        mcp_servers=mcp_servers,
+        web=web,
+        subagent_model=raw.get("subagent_model"),
     )

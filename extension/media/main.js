@@ -9,6 +9,7 @@
 
   let assistantEl = null;
   let cmdEl = null; // current streaming command output block
+  let todosEl = null; // persistent checklist block
   let busy = false;
 
   function scroll() {
@@ -55,6 +56,7 @@
     promptEl.value = '';
     assistantEl = null;
     cmdEl = null;
+    todosEl = null;
     setBusy(true);
     vscode.postMessage({ command: 'run', text });
   }
@@ -157,6 +159,31 @@
       }
       case 'usage':
         tokensEl.textContent = '⛁ ' + ev.session_tokens + ' tokens';
+        break;
+      case 'thinking':
+        add('thinking', '💭 ' + escapeHtml(ev.text));
+        break;
+      case 'plan':
+        add('plan', '<div class="plan-head">Proposed plan</div><pre>' + escapeHtml(ev.text) + '</pre>');
+        break;
+      case 'todos': {
+        const icon = { completed: '✔', in_progress: '▸', pending: '○' };
+        const rows = (ev.items || [])
+          .map((t) => '<div class="todo todo-' + (t.status || 'pending') + '">' +
+            (icon[t.status] || '○') + ' ' + escapeHtml(t.content || '') + '</div>')
+          .join('');
+        if (todosEl && todosEl.parentElement) {
+          todosEl.innerHTML = rows;
+        } else {
+          todosEl = add('todos', rows);
+        }
+        break;
+      }
+      case 'subagent_start':
+        add('tool', '↳ <b>sub-agent</b> ' + escapeHtml(ev.description));
+        break;
+      case 'subagent_end':
+        add('result ok', '↳ sub-agent done <pre>' + escapeHtml((ev.summary || '').slice(0, 600)) + '</pre>');
         break;
       case 'approval_request':
         approvalCard(ev);

@@ -33,6 +33,8 @@ from .tools import ToolContext, execute, list_files, preview_for, run_command
 
 _FILE_MUTATORS = {"write_file", "edit_file", "multi_edit", "create_file", "delete_file"}
 _MAX_SUBAGENT_DEPTH = 2
+# Memory/context: bound how much of any single tool result is kept in history.
+_MAX_TOOL_RESULT_CHARS = 16000
 
 
 class _SubAgentIO(AgentIO):
@@ -429,4 +431,9 @@ class AgentSession:
         self._append_tool_result(tc.id, f"Sub-agent '{desc}' result:\n{summary}")
 
     def _append_tool_result(self, call_id: str, content: str) -> None:
+        # Bound very large tool outputs kept in context (keep head + tail).
+        if content and len(content) > _MAX_TOOL_RESULT_CHARS:
+            head = _MAX_TOOL_RESULT_CHARS * 2 // 3
+            tail = _MAX_TOOL_RESULT_CHARS - head
+            content = (content[:head] + "\n…[output trimmed to save context]…\n" + content[-tail:])
         self.messages.append({"role": "tool", "tool_call_id": call_id, "content": content})

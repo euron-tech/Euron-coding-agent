@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.7
+
+- Live status line (CLI): spinner, rotating verb, elapsed time, live token count
+  and cost, and tool / sub-agent counters with the current activity - while
+  streaming tokens.
+- Completion summary after every task: duration, tokens, cost, and the steps
+  taken (every tool and sub-agent, in order).
+- Memory & context optimization: large tool outputs are bounded (head+tail) in
+  history; automatic compaction once over `agent.max_context_tokens`; live token
+  accounting.
+
 ## 0.6.0
 
 The final buildable batch.

@@ -12,7 +12,7 @@ anywhere, with any model, fully self-hostable.
 [![Tests](https://img.shields.io/badge/tests-60%20passing-brightgreen.svg)](backend/tests)
 
 <!-- AUTOGEN:STATUS -->
-**Latest: v1.0.6** · 28 tools · 15 providers · 62 tests passing
+**Latest: v1.0.7** · 28 tools · 15 providers · 62 tests passing
 <!-- /AUTOGEN:STATUS -->
 
 </div>
@@ -185,6 +185,25 @@ Linear (`notifications:` in config) - useful with scheduled and headless runs.
 Approval and diffs on every mutation/command, per-turn checkpoints and undo,
 cancel/stop, `.gitignore`-aware ignores, `.env` never read, command timeouts,
 sandboxed paths, and bearer-token auth for remote serving.
+
+### Live status & summary (CLI)
+While the agent works, the CLI shows a live status line - a spinner, a rotating
+verb, elapsed time, live token count and cost, and tool / sub-agent counters with
+the current activity - while still streaming the response tokens. When a task
+finishes it prints a summary: how long it took, total tokens and cost, and the
+steps taken (every tool and sub-agent, in order).
+
+### Memory & context optimization
+The agent actively manages context so long sessions stay fast and within the
+model's window:
+- Automatic compaction - older tool outputs are trimmed (and, with `/compact`,
+  LLM-summarized) once the conversation exceeds `agent.max_context_tokens`.
+- Bounded tool results - very large tool outputs are capped (head + tail) in
+  history, so a single big file read or command never blows up memory.
+- On-demand retrieval - the model reads/searches files as needed (ripgrep +
+  agentic search) instead of holding the whole repo in context.
+- Live token accounting - you always see how many tokens the session has used
+  (`/usage` and the live status line).
 
 ### Context and cost
 `@file` mentions, automatic compaction and `/compact` summarization, token and

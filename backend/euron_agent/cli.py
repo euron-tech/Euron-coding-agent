@@ -21,6 +21,7 @@ import getpass
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 from rich.console import Console
@@ -46,89 +47,222 @@ def _force_utf8() -> None:
 _force_utf8()
 console = Console(legacy_windows=False)
 
+_SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_VERBS = ["Thinking", "Working", "Pondering", "Forging", "Composing",
+          "Reasoning", "Crafting", "Synthesizing", "Exploring"]
+
 
 # --------------------------------------------------------------------------- #
 # Terminal IO
 # --------------------------------------------------------------------------- #
 class TerminalIO(AgentIO):
+    """Terminal renderer with a Claude-Code-style live status footer (spinner,
+    rotating verb, elapsed time, live tokens/cost, tool & sub-agent counters, and
+    the current activity), streamed tokens, and a completion summary."""
+
     def __init__(self, auto_approve: bool):
         self.auto_approve = auto_approve
-        self._dirty = False  # unfinished streamed line on screen
+        self._tty = sys.stdout.isatty()
+        self._live = None
+        self._ticker = None
+        self._stream = ""        # in-progress streamed text (assistant / command)
+        self._activity = ""      # current tool / sub-agent label
+        self._start = 0.0
+        self.tokens = 0
+        self.cost = 0.0
+        self.tool_count = 0
+        self.agent_count = 0
+        self.steps: list = []
+        self._finished = True
+        self._dirty = False  # plain-mode: unfinished streamed line on screen
 
-    def _newline_if_dirty(self) -> None:
-        if self._dirty:
+    # ----- live status footer -------------------------------------------- #
+    def begin_run(self) -> None:
+        self._stream = ""
+        self._activity = ""
+        self.steps = []
+        self.tool_count = self.agent_count = self.tokens = 0
+        self.cost = 0.0
+        self._finished = False
+        self._start = time.monotonic()
+        if self._tty:
+            self._start_live()
+
+    def _start_live(self) -> None:
+        try:
+            from rich.live import Live
+
+            self._live = Live(self._render(), console=console, refresh_per_second=12)
+            self._live.start()
+            self._ticker = asyncio.create_task(self._tick())
+        except Exception:
+            self._live = None
+
+    async def _tick(self) -> None:
+        try:
+            while self._live is not None:
+                await asyncio.sleep(0.1)
+                if self._live is not None:
+                    self._live.update(self._render())
+        except asyncio.CancelledError:
+            pass
+
+    def _render(self):
+        from rich.console import Group
+        from rich.text import Text
+
+        body = Text(self._stream)
+        elapsed = time.monotonic() - self._start
+        verb = _VERBS[int(elapsed / 2) % len(_VERBS)]
+        spin = _SPINNER[int(elapsed * 10) % len(_SPINNER)]
+        tok = f"{self.tokens / 1000:.1f}k" if self.tokens >= 1000 else str(self.tokens)
+        footer = Text()
+        footer.append(f"  {spin} ", style="cyan")
+        footer.append(f"{verb}… ", style="bold cyan")
+        footer.append(f"{elapsed:.0f}s · {tok} tok", style="dim")
+        if self.cost:
+            footer.append(f" · ${self.cost:.4f}", style="dim")
+        footer.append(f" · {self.tool_count} tools", style="dim")
+        if self.agent_count:
+            footer.append(f" · {self.agent_count} agents", style="dim")
+        if self._activity:
+            footer.append(f"  ⤷ {self._activity}", style="yellow")
+        return Group(body, footer)
+
+    def _print(self, renderable) -> None:
+        (self._live.console if self._live is not None else console).print(renderable)
+
+    def _flush_stream(self) -> None:
+        if self._live is not None:
+            if self._stream:
+                from rich.text import Text
+
+                self._print(Text(self._stream))   # commit streamed text above footer
+                self._stream = ""
+        elif self._dirty:
             sys.stdout.write("\n")
             sys.stdout.flush()
             self._dirty = False
 
     def emit_sync(self, event: dict) -> None:
         if event.get("type") in ("token", "command_output"):
-            sys.stdout.write(event["text"])
-            sys.stdout.flush()
-            self._dirty = True
+            if self._live is not None:
+                self._stream += event["text"]
+            else:
+                sys.stdout.write(event["text"])
+                sys.stdout.flush()
+                self._dirty = True
 
     async def emit(self, event: dict) -> None:
         t = event["type"]
-        if t == "status":
+        if t in ("status", "token"):
             return
+        self._flush_stream()  # commit any in-progress streamed text first
         if t == "assistant_message":
-            self._newline_if_dirty()
-            return
-        self._newline_if_dirty()
-        if t == "tool_start":
+            return  # already streamed + committed
+        elif t == "tool_start":
+            self.tool_count += 1
             args = event["args"]
-            detail = args.get("path") or args.get("command") or args.get("query") or ""
-            console.print(f"[cyan]⚙ {event['name']}[/cyan] [dim]{detail}[/dim]")
+            detail = args.get("path") or args.get("command") or args.get("query") or args.get("name") or ""
+            label = f"{event['name']} {detail}".strip()
+            self._activity = label
+            self.steps.append(label)
+            self._print(f"[cyan]⚙ {event['name']}[/cyan] [dim]{detail}[/dim]")
         elif t == "diff":
             self._print_diff(event["patch"])
         elif t == "tool_result":
+            self._activity = ""
             mark = "[green]✓[/green]" if event["ok"] else "[red]✗[/red]"
             out = (event["output"] or "").strip()
             if out:
                 snippet = out if len(out) < 1200 else out[:1200] + " …"
-                console.print(f"{mark} [dim]{snippet}[/dim]")
+                self._print(f"{mark} [dim]{snippet}[/dim]")
         elif t == "error":
-            console.print(f"[red]error:[/red] {event['message']}")
+            self._print(f"[red]error:[/red] {event['message']}")
         elif t == "usage":
-            cost = event.get("session_cost", 0.0)
-            cost_str = f" · ${cost:.4f}" if cost else ""
-            console.print(
-                f"[dim]· {event['prompt_tokens']}+{event['completion_tokens']} tok "
-                f"(session {event['session_tokens']}{cost_str})[/dim]"
-            )
+            self.tokens = event.get("session_tokens", self.tokens)
+            self.cost = event.get("session_cost", self.cost)
         elif t == "info":
-            console.print(f"[dim]ℹ {event['message']}[/dim]")
+            self._print(f"[dim]ℹ {event['message']}[/dim]")
         elif t == "thinking":
-            console.print(f"[dim]💭 {event['text']}[/dim]")
+            self._print(f"[dim]💭 {event['text']}[/dim]")
         elif t == "plan":
-            console.print(Panel(event["text"], title="Proposed plan", border_style="magenta"))
+            self._print(Panel(event["text"], title="Proposed plan", border_style="magenta"))
         elif t == "todos":
             marks = {"completed": "[green]✔[/green]", "in_progress": "[yellow]▸[/yellow]", "pending": "[dim]○[/dim]"}
-            console.print("[bold]Tasks:[/bold]")
+            self._print("[bold]Tasks:[/bold]")
             for item in event["items"]:
-                console.print(f"  {marks.get(item.get('status'), '○')} {item.get('content', '')}")
+                self._print(f"  {marks.get(item.get('status'), '○')} {item.get('content', '')}")
         elif t == "subagent_start":
-            console.print(f"[cyan]↳ sub-agent:[/cyan] {event['description']}")
+            self.agent_count += 1
+            self._activity = f"sub-agent: {event['description']}"
+            self.steps.append(f"sub-agent: {event['description']}")
+            self._print(f"[cyan]↳ sub-agent:[/cyan] {event['description']}")
         elif t == "subagent_end":
-            console.print(f"[cyan]↳ sub-agent done[/cyan] [dim]{event['summary']}[/dim]")
+            self._activity = ""
+            self._print(f"[cyan]↳ sub-agent done[/cyan] [dim]{event['summary']}[/dim]")
         elif t == "cancelled":
-            console.print("[yellow]■ cancelled[/yellow]")
+            self._print("[yellow]■ cancelled[/yellow]")
         elif t == "done":
-            console.print("[dim]— done —[/dim]")
+            self._finish()
+
+    def _finish(self) -> None:
+        if self._finished:
+            return
+        self._finished = True
+        self._flush_stream()
+        if self._ticker is not None:
+            self._ticker.cancel()
+            self._ticker = None
+        if self._live is not None:
+            try:
+                from rich.text import Text
+
+                self._live.update(Text(""))
+                self._live.stop()
+            except Exception:
+                pass
+            self._live = None
+        elapsed = time.monotonic() - self._start
+        cost = f" · ${self.cost:.4f}" if self.cost else ""
+        lines = [f"completed in {elapsed:.0f}s · {self.tokens} tokens{cost} · "
+                 f"{self.tool_count} tool calls · {self.agent_count} sub-agents"]
+        if self.steps:
+            lines.append("")
+            lines.append("[bold]Steps taken:[/bold]")
+            for i, s in enumerate(self.steps[:25], 1):
+                lines.append(f"  {i}. {s}")
+            if len(self.steps) > 25:
+                lines.append(f"  … and {len(self.steps) - 25} more")
+        console.print(Panel("\n".join(lines), title="Summary", border_style="green"))
+
+    def _pause_live(self) -> bool:
+        if self._live is None:
+            return False
+        if self._ticker is not None:
+            self._ticker.cancel()
+            self._ticker = None
+        try:
+            self._live.stop()
+        except Exception:
+            pass
+        self._live = None
+        return True
 
     def _print_diff(self, patch: str) -> None:
         for line in patch.splitlines():
             if line.startswith("+") and not line.startswith("+++"):
-                console.print(f"[green]{line}[/green]")
+                self._print(f"[green]{line}[/green]")
             elif line.startswith("-") and not line.startswith("---"):
-                console.print(f"[red]{line}[/red]")
+                self._print(f"[red]{line}[/red]")
             elif line.startswith("@@"):
-                console.print(f"[magenta]{line}[/magenta]")
+                self._print(f"[magenta]{line}[/magenta]")
             else:
-                console.print(f"[dim]{line}[/dim]")
+                self._print(f"[dim]{line}[/dim]")
 
     async def request_approval(self, request: dict) -> ApprovalDecision:
-        self._newline_if_dirty()
+        self._flush_stream()
+        resume = self._pause_live()
         preview = request.get("preview") or ""
         title = f"Approve {request['name']}?"
         if preview:
@@ -138,12 +272,18 @@ class TerminalIO(AgentIO):
                 console.print(Panel(preview, title=title, border_style="yellow"))
         if self.auto_approve:
             console.print("[green]auto-approved[/green]")
+            if resume:
+                self._start_live()
             return ApprovalDecision(approved=True)
-        answer = await asyncio.to_thread(
-            Prompt.ask,
-            f"[yellow]{title}[/yellow] (y=yes, a=always, n=no, or type feedback)",
-            default="y",
-        )
+        try:
+            answer = await asyncio.to_thread(
+                Prompt.ask,
+                f"[yellow]{title}[/yellow] (y=yes, a=always, n=no, or type feedback)",
+                default="y",
+            )
+        finally:
+            if resume:
+                self._start_live()
         a = answer.strip().lower()
         if a in ("y", "yes", ""):
             return ApprovalDecision(approved=True)
@@ -211,6 +351,7 @@ async def _run_task(task: str, args) -> None:
         return
     dangerous = getattr(args, "dangerous", False)
     io = TerminalIO(auto_approve=args.yes or dangerous)
+    io.begin_run()
     await AgentSession(workspace, cfg, io, dangerous=dangerous).run(task)
 
 
@@ -633,6 +774,7 @@ async def _chat(args) -> None:
                 "[yellow]No API key set — use /key first (or /provider to switch).[/yellow]"
             )
             continue
+        io.begin_run()
         task = asyncio.ensure_future(session.run(msg))
         try:
             await task
@@ -643,6 +785,8 @@ async def _chat(args) -> None:
                 await task
             except Exception:
                 pass
+        finally:
+            io._finish()  # safety: ensure the live footer is stopped
     console.print("[dim]bye[/dim]")
 
 

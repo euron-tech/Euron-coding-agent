@@ -40,7 +40,7 @@ Phases 3–4 — config, control, and a richer UI (model-agnostic).
   "Create Project Memory" command / CLI `/init`.
 - **Custom slash commands** — `.euron/commands/*.md` with `$ARGUMENTS`.
 - **Cost tracking** — live $ estimate alongside tokens.
-- **Multimodal** — attach images (📎) to vision-capable models.
+- **Multimodal** — attach images () to vision-capable models.
 - **Extended thinking** — provider-native where available (Anthropic thinking,
   OpenAI reasoning effort), guarded so non-reasoning models are unaffected.
 - **Richer panel** — markdown rendering, "Fix Diagnostics" command, Set Model.

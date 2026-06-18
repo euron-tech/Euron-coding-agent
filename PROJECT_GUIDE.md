@@ -241,7 +241,7 @@ when it's finished.
 
 ## Phase C — The brain
 
-### 7. `backend/euron_agent/loop.py`  ⭐ the heart
+### 7. `backend/euron_agent/loop.py`   the heart
 
 **Read it for:** **how everything above is orchestrated** into an actual agent.
 

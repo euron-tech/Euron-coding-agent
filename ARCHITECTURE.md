@@ -278,81 +278,81 @@ explicit CLI/extension overrides. Any OpenAI-compatible endpoint works by settin
 
 ---
 
-## 9. What's implemented ✅ vs not yet ❌
+## 9. What's implemented  vs not yet
 
 ### Implemented
-- ✅ Agentic loop with **native tool-calling** and multi-step iteration.
-- ✅ Provider-agnostic LLM layer (OpenAI-compatible + Anthropic), **streaming**,
+- Agentic loop with **native tool-calling** and multi-step iteration.
+- Provider-agnostic LLM layer (OpenAI-compatible + Anthropic), **streaming**,
   with **retry/backoff** and **token-usage** accounting.
-- ✅ Tools: list, read (ranged, binary-guarded), search (ripgrep), write,
+- Tools: list, read (ranged, binary-guarded), search (ripgrep), write,
   **surgical edit**, create, delete, run command — all **workspace-sandboxed**.
-- ✅ **Approval gating with diffs** for every mutation/command, plus an
+- **Approval gating with diffs** for every mutation/command, plus an
   **auto-approve** toggle (CLI `/yes`, extension toolbar).
-- ✅ **Cancel/stop** mid-task and **undo** (per-turn checkpoint/revert).
-- ✅ **Streaming command output** (live stdout/stderr).
-- ✅ **Context management**: token estimate + automatic compaction of old tool
+- **Cancel/stop** mid-task and **undo** (per-turn checkpoint/revert).
+- **Streaming command output** (live stdout/stderr).
+- **Context management**: token estimate + automatic compaction of old tool
   output when over the window budget; **@file mentions** inline file contents.
-- ✅ **Persistent history** per workspace across restarts (CLI `--resume`,
+- **Persistent history** per workspace across restarts (CLI `--resume`,
   extension `persistHistory`).
-- ✅ **.gitignore-aware** ignores in addition to configured globs.
-- ✅ **Multi-root workspace** selection.
-- ✅ Two front-ends sharing one brain: VS Code webview + terminal CLI.
-- ✅ Zero-setup backend (auto venv + PyPI install) and **SecretStorage** keys.
-- ✅ **Cloud/self-host ready**: bearer-token auth + bind to any host
+- **.gitignore-aware** ignores in addition to configured globs.
+- **Multi-root workspace** selection.
+- Two front-ends sharing one brain: VS Code webview + terminal CLI.
+- Zero-setup backend (auto venv + PyPI install) and **SecretStorage** keys.
+- **Cloud/self-host ready**: bearer-token auth + bind to any host
   (`serve --host 0.0.0.0 --token …`).
-- ✅ A real **pytest** suite (`backend/tests/`); packaging + CI/CD to PyPI,
+- A real **pytest** suite (`backend/tests/`); packaging + CI/CD to PyPI,
   Marketplace, Open VSX.
 
 **0.3.0 — Claude-Code-style capabilities (model-agnostic):**
-- ✅ **Plan mode** — read-only research → `update_plan` (approve) → execute.
-- ✅ **Sub-agents** — `spawn_agent` delegates focused sub-tasks (own context,
+- **Plan mode** — read-only research → `update_plan` (approve) → execute.
+- **Sub-agents** — `spawn_agent` delegates focused sub-tasks (own context,
   optional cheaper `subagent_model`), depth-bounded.
-- ✅ **TODO checklist** — `todo_write`, streamed to CLI + webview.
-- ✅ **MCP client** — connect stdio/SSE MCP servers; tools exposed as
+- **TODO checklist** — `todo_write`, streamed to CLI + webview.
+- **MCP client** — connect stdio/SSE MCP servers; tools exposed as
   `mcp__server__tool` (optional `[mcp]` extra).
-- ✅ **Web tools** — `web_search` (DuckDuckGo / Tavily / Brave / SerpAPI) +
+- **Web tools** — `web_search` (DuckDuckGo / Tavily / Brave / SerpAPI) +
   `web_fetch`.
-- ✅ **More tools** — `glob`, `multi_edit` (atomic), background processes,
+- **More tools** — `glob`, `multi_edit` (atomic), background processes,
   `git_status`/`git_diff`/`git_commit`.
-- ✅ **`/compact`** — LLM summarization of older turns.
+- **`/compact`** — LLM summarization of older turns.
 
 **0.4.0 — config, control, multimodal:**
-- ✅ **Permissions engine** — allow/ask/deny by tool+glob, "Always" persists a rule.
-- ✅ **Hooks** — PreToolUse (blocking) / PostToolUse / Stop / UserPromptSubmit.
-- ✅ **Project memory** (`AGENTS.md`) + **custom slash commands**
+- **Permissions engine** — allow/ask/deny by tool+glob, "Always" persists a rule.
+- **Hooks** — PreToolUse (blocking) / PostToolUse / Stop / UserPromptSubmit.
+- **Project memory** (`AGENTS.md`) + **custom slash commands**
   (`.euron/commands/*.md`).
-- ✅ **Cost tracking** (token → $) and **extended thinking** (provider-native,
+- **Cost tracking** (token → $) and **extended thinking** (provider-native,
   guarded).
-- ✅ **Multimodal image input** to vision models; markdown rendering + "Fix
+- **Multimodal image input** to vision models; markdown rendering + "Fix
   Diagnostics" in the extension.
 
 **0.5.0 — Claude + Cursor power-ups:**
-- ✅ **Skills** (`.euron/skills/<name>/SKILL.md`, progressive disclosure via
+- **Skills** (`.euron/skills/<name>/SKILL.md`, progressive disclosure via
   `use_skill`).
-- ✅ **Model fallback chains** (`fallback_models`).
-- ✅ **Git worktree isolation** (`worktree_add/list/remove` — Cursor shadow workspace).
-- ✅ **`/review`** (code review of the diff) + extension "Review Changes".
-- ✅ **`/usage`** breakdown (tokens, cost, per-tool, sub-agents) and **`/effort`**.
+- **Model fallback chains** (`fallback_models`).
+- **Git worktree isolation** (`worktree_add/list/remove` — Cursor shadow workspace).
+- **`/review`** (code review of the diff) + extension "Review Changes".
+- **`/usage`** breakdown (tokens, cost, per-tool, sub-agents) and **`/effort`**.
 
 **0.6.0 — plugins, sessions, CI/PR, diagnostics:**
-- ✅ **Plugins** — install skills+commands+MCP bundles from a dir or `.zip` URL.
-- ✅ **Named sessions** — resume, dashboard (`euron-agent sessions`), `/search`.
-- ✅ **CI/PR helpers** — `git_branch`, `git_push`, `open_pr` (gh CLI).
-- ✅ **Auto-diagnostics loop** + reveal-changed-files in the extension.
+- **Plugins** — install skills+commands+MCP bundles from a dir or `.zip` URL.
+- **Named sessions** — resume, dashboard (`euron-agent sessions`), `/search`.
+- **CI/PR helpers** — `git_branch`, `git_push`, `open_pr` (gh CLI).
+- **Auto-diagnostics loop** + reveal-changed-files in the extension.
 
 ### Still on the roadmap (nice-to-have polish)
-- ◻ Editor-native **diff apply** via `WorkspaceEdit` (today: files are written +
+- Editor-native **diff apply** via `WorkspaceEdit` (today: files are written +
   revealed; undo is via the checkpointer).
-- ◻ `@file` **autocomplete** in the webview; syntax-highlighted diff view.
+- `@file` **autocomplete** in the webview; syntax-highlighted diff view.
 
 ### Intentionally out of scope (different product surface)
-- ❌ Cursor **Tab** (proprietary inline-completion model) — we're an agent, not an
+- Cursor **Tab** (proprietary inline-completion model) — we're an agent, not an
   editor completion engine.
-- ❌ Hosted **cloud / background agents**, **BugBot** SaaS, mobile apps, routines,
+- Hosted **cloud / background agents**, **BugBot** SaaS, mobile apps, routines,
   computer-use GUI control — need a hosted service / proprietary infra.
-- ❌ Vector-DB / embeddings indexing — retrieval stays ripgrep + agentic search
+- Vector-DB / embeddings indexing — retrieval stays ripgrep + agentic search
   (the same choice Claude Code makes); keeps it light and model-agnostic.
-- ❌ Anthropic-locked features as hard deps (prompt caching, server-side web
+- Anthropic-locked features as hard deps (prompt caching, server-side web
   search, citations) — provider-neutral equivalents instead.
 
 ---

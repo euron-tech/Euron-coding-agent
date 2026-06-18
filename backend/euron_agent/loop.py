@@ -206,7 +206,7 @@ class AgentSession:
         )
         from . import notify as _notify
 
-        text = f"🤖 Euron Agent [{status}] in {self.workspace}\n{str(summary)[:1500]}"
+        text = f"Euron Agent [{status}] in {self.workspace}\n{str(summary)[:1500]}"
         await asyncio.to_thread(_notify.dispatch, notif, text)
 
     async def _agent_loop(self) -> None:

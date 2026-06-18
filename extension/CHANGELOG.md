@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.4.0
+
+The full loop: one sentence → built → tested → security-scanned → deployed to a live
+URL → monitored → self-healing. No CLI agent ships first-class deploy + production
+monitoring — this does, on infra you control, with safety gates.
+
+- **`ship`** (`euron-agent ship "<what>"` / `/ship`): plan → build → test →
+  security-scan (`secret_scan` + `dependency_audit`) → deploy → wire monitoring →
+  report the live URL.
+- **`deploy`** (`/deploy`, `euron-agent deploy [--check]`): headless deployment to
+  Cloud Run, Cloudflare Workers/Pages, Vercel, Netlify, Render, Fly, Railway, Docker,
+  Kubernetes/Helm, AWS (SAM/App Runner), Azure Container Apps — plus Neon and Supabase
+  database provisioning. Each via its CLI + a credential env var. `--check` shows which
+  targets are ready.
+- **Spend gate (guardrails):** free-tier targets deploy directly; billable targets are
+  blocked unless `deploy.allow_billable: true` (or set to ask via
+  `deploy.free_tier_only: false`). Credentials are read from env vars only and redacted
+  from output; every deploy/rollback is recorded in the tamper-evident audit log.
+- **Monitoring** (`monitor` / `/monitor`): Sentry / OpenTelemetry / Datadog / uptime
+  (UptimeRobot, Better Stack) wiring + a `/health` scaffold + live error/uptime status.
+- **Self-healing** (`heal` / `/heal`): policy = rollback auto, fixes as PRs. A failed
+  health check triggers an automatic rollback to the last known-good release; each
+  production error becomes a fix + regression test opened as a PR (never auto-merged or
+  auto-deployed). Pair with `schedule` for continuous monitor-and-remediate.
+- New tools the agent can call: `deploy_check`, `deploy`, `rollback`, `provision_db`,
+  `monitor_status`, `health_check`. New config blocks: `deploy:`, `monitoring:`,
+  `selfheal:`. See docs/DEPLOY.md.
+
 ## 1.3.0
 
 Multi-model routing — one model per job, across providers, no lock-in.

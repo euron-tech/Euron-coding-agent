@@ -19,6 +19,9 @@ MUTATING_TOOLS = {
     "git_branch",
     "git_push",
     "open_pr",
+    "deploy",
+    "rollback",
+    "provision_db",
 }
 
 
@@ -154,6 +157,63 @@ TOOL_SCHEMAS = [
         "tool (pip-audit / npm audit / cargo audit / govulncheck) when installed.",
         {},
         [],
+    ),
+    _fn(
+        "deploy_check",
+        "List deployment targets (Cloud Run, Cloudflare, Vercel, Netlify, Fly, "
+        "Railway, Render, Docker, Kubernetes/Helm, AWS, Azure, + Neon/Supabase DBs) "
+        "and which are READY (CLI installed + credential env var set). Call this "
+        "FIRST before deploying to pick a target.",
+        {},
+        [],
+    ),
+    _fn(
+        "deploy",
+        "Deploy the current project to a target (e.g. 'cloudrun', 'cloudflare', "
+        "'vercel', 'fly', 'render'). Free-tier targets run directly; billable targets "
+        "are gated by the spend policy and need approval. `params` fills command "
+        "placeholders like {service},{region},{app},{dist}. Requires approval.",
+        {
+            "target": {"type": "string", "description": "Target name from deploy_check."},
+            "params": {"type": "object", "description": "Placeholder values for the deploy command."},
+        },
+        ["target"],
+    ),
+    _fn(
+        "rollback",
+        "Roll a deployment target back to its previous known-good release "
+        "(safe — only reverts state). Requires approval.",
+        {
+            "target": {"type": "string"},
+            "params": {"type": "object", "description": "e.g. {revision},{version},{deployment}."},
+        },
+        ["target"],
+    ),
+    _fn(
+        "provision_db",
+        "Provision a managed database before deploying the app: 'neon' (serverless "
+        "Postgres) or 'supabase' (full backend). Requires approval.",
+        {
+            "provider": {"type": "string", "description": "'neon' or 'supabase'."},
+            "params": {"type": "object"},
+        },
+        ["provider"],
+    ),
+    _fn(
+        "monitor_status",
+        "Report configured monitoring providers (Sentry/OpenTelemetry/Datadog/uptime) "
+        "and current unresolved error / uptime status for the deployed app.",
+        {},
+        [],
+    ),
+    _fn(
+        "health_check",
+        "Check a deployed app's health endpoint by URL. Returns healthy/unhealthy.",
+        {
+            "url": {"type": "string", "description": "Base URL of the deployed app."},
+            "path": {"type": "string", "description": "Health path (default /health)."},
+        },
+        ["url"],
     ),
     _fn(
         "multi_edit",
@@ -316,6 +376,9 @@ PLAN_MODE_TOOLS = {
     "repo_map",
     "secret_scan",
     "dependency_audit",
+    "deploy_check",
+    "monitor_status",
+    "health_check",
     "web_search",
     "web_fetch",
     "process_list",

@@ -109,7 +109,8 @@ class AgentSession:
         ignore = list(config.ignore)
         if config.agent.use_gitignore:
             ignore += gitignore.load_gitignore_patterns(Path(workspace))
-        self.ctx = ToolContext(workspace, config.agent, ignore, web=config.web)
+        self.ctx = ToolContext(workspace, config.agent, ignore, web=config.web,
+                               deploy_cfg=config.deploy)
 
         self.checkpointer = Checkpointer()
         self.session_tokens = 0

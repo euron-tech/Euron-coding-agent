@@ -30,6 +30,10 @@ Global CLI flags (must come **before** the subcommand): `--config <path>`,
 | `euron-agent scan` | Fast risk scan: `secret_scan` (hard-coded credentials) + `dependency_audit` (vulnerable deps). `--yes` to auto-approve. |
 | `euron-agent secfix` | Autonomous security remediation loop: audit → plan → fix → re-scan & re-test to verify. `--yes` to auto-approve. |
 | `euron-agent test` | Write and run tests for the recent/changed code. `--all` builds a full project test suite; `--yes` to auto-approve. |
+| `euron-agent ship "<what>"` | End-to-end: plan → build → test → security-scan → deploy to a live URL → wire monitoring. See [DEPLOY.md](DEPLOY.md). |
+| `euron-agent deploy ["<target/notes>"]` | Deploy the project to a live URL in one prompt. `--check` just lists targets + readiness (CLI + token). |
+| `euron-agent monitor` | Show monitoring status — configured providers (Sentry/OTel/Datadog/uptime) and current errors/uptime. |
+| `euron-agent heal ["<url>"]` | Self-heal: health-check the deployed URL, auto-rollback if unhealthy, and open a PR for each production error (never auto-merged). |
 | `euron-agent doctor` | Environment self-check: Python version, installed version, provider + key reachability, optional tools (git/rg/gh/pip-audit), writable dirs. |
 | `euron-agent audit` | Show recent entries from the tamper-evident action log and cryptographically verify the hash chain. `--lines N` (default 25). |
 | `euron-agent init-ci` | Write a GitHub Actions workflow (`.github/workflows/euron-agent.yml`) that scans + reviews pull requests headlessly. `--force` overwrites. |
@@ -69,6 +73,11 @@ Global CLI flags (must come **before** the subcommand): `--config <path>`,
 | `/secfix` | Autonomous security remediation: audit → fix (with approval) → re-scan & re-test. |
 | `/test [target]` | Write tests for the code (or the named target) and run them. |
 | `/testall` | Build and run a comprehensive test suite for the whole project, then report coverage gaps. |
+| `/ship [what]` | End-to-end: plan → build → test → security-scan → deploy → monitor. |
+| `/deploy [target]` | Deploy the project to a live URL in one prompt. |
+| `/deploys` | List deploy targets and which are ready (CLI installed + token set). |
+| `/monitor` | Show monitoring status (errors / uptime / configured providers). |
+| `/heal [url]` | Self-heal: health-check, auto-rollback if unhealthy, open PRs for errors. |
 
 ### Project, memory & skills
 | Command | Description |

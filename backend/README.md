@@ -55,6 +55,10 @@ file is required - just pick a provider and supply a key.
     euron-agent scan                fast secret + dependency vulnerability scan
     euron-agent secfix              autonomous security remediation (audit→fix→verify)
     euron-agent test [--all]        write + run tests (--all = whole-project suite)
+    euron-agent ship "<what>"       plan→build→test→scan→deploy→monitor, end to end
+    euron-agent deploy [--check]    deploy to a live URL (or list target readiness)
+    euron-agent monitor             monitoring status (errors/uptime/providers)
+    euron-agent heal [<url>]        self-heal: health-check, auto-rollback, error→PR
     euron-agent doctor              environment self-check
     euron-agent audit [--lines N]   show & verify the tamper-evident action log
     euron-agent init-ci             scaffold a GitHub Actions workflow
@@ -64,6 +68,23 @@ file is required - just pick a provider and supply a key.
 In-chat commands: /provider /key /model /effort /plan /execute /review /security
 /scan /secfix /test /testall /audit /doctor /compact /init /skills /search /usage
 /undo /reset /yes /help /exit, plus any custom command in .euron/commands/.
+
+## What's new (1.4.0)
+
+- **The full loop — one sentence to a live, monitored, self-healing app.**
+  `euron-agent ship "build a FastAPI todo API with a Neon DB and put it live"` runs
+  plan → build → test → security-scan → **deploy** → **monitor**.
+- **Auto-deploy** headless to Cloud Run, Cloudflare/Pages, Vercel, Netlify, Render,
+  Fly, Railway, Docker, Kubernetes/Helm, AWS (SAM/App Runner), Azure Container Apps,
+  plus Neon/Supabase databases — each via its CLI + a credential env var.
+- **Spend gate:** free-tier targets deploy directly; billable ones are blocked unless
+  you set `deploy.allow_billable`. Secrets are read from env, never printed, and every
+  deploy/rollback is recorded in the audit log.
+- **Monitoring** (`euron-agent monitor`): wires Sentry / OpenTelemetry / uptime and
+  reports current errors + uptime.
+- **Self-healing** (`euron-agent heal`): auto-rollback to the last known-good release
+  on a failed health check; production errors become a fix + regression test in a PR
+  (never auto-merged). See docs/DEPLOY.md.
 
 ## What's new (1.3.0)
 
@@ -119,6 +140,8 @@ In-chat commands: /provider /key /model /effort /plan /execute /review /security
   branch/push, open_pr, git worktrees, web_search, web_fetch.
 - Plan mode and execute mode, sub-agents, and multi-agent teams with persistent state.
 - Drag-and-drop context: read files (any length), whole folders, and images.
+- Full loop: one sentence → build → test → scan → deploy to a live URL → monitor → self-heal.
+- Auto-deploy to 13+ targets (Cloud Run/Cloudflare/Vercel/Netlify/Fly/Railway/Render/Docker/K8s/AWS/Azure + Neon/Supabase) with a free-tier-first spend gate.
 - Multi-model routing: a different model per phase across providers, cost-aware with auto-escalation.
 - Token-friendly code intelligence: `repo_map` outline tool, model routing, prompt caching.
 - Security suite: `/security`, `/scan`, `/secfix`, secret_scan + dependency_audit tools.

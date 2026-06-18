@@ -1076,3 +1076,110 @@ def test_escalation_disabled_in_fixed(tmp_path):
     sess._step_total, sess._step_fail = 1, 1
     run(sess._maybe_escalate())
     assert sess._escalated is False
+
+
+# --------------------------------------------------------------------------- #
+# v1.4.0 — auto-deploy / monitor / self-heal / guardrails
+# --------------------------------------------------------------------------- #
+def test_deploy_registry_and_commands(monkeypatch):
+    from euron_agent import deploy
+    assert deploy.target("cloudrun") and deploy.target("vercel")
+    assert deploy.target("nope") is None
+    # token + cli gating
+    monkeypatch.delenv("VERCEL_TOKEN", raising=False)
+    ok, msg = deploy.deploy_command("vercel")
+    assert not ok and ("CLI not installed" in msg or "No credential" in msg)
+    # command building with params
+    monkeypatch.setattr(deploy, "cli_installed", lambda t: True)
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/sa.json")
+    ok, cmd = deploy.deploy_command("cloudrun", {"service": "api", "region": "us-central1"})
+    assert ok and "gcloud run deploy api" in cmd and "us-central1" in cmd
+    ok, rb = deploy.rollback_command("kubernetes", {"deployment": "web"})
+    assert ok and "rollout undo deployment/web" in rb
+    ok, _ = deploy.rollback_command("netlify")  # no rollback cmd
+    assert not ok
+
+
+def test_deploy_readiness_and_suggest(monkeypatch):
+    from euron_agent import deploy
+    monkeypatch.setattr(deploy, "cli_installed", lambda t: t.name in ("vercel", "cloudrun"))
+    monkeypatch.setattr(deploy, "has_token", lambda t: t.name == "vercel")
+    rows = {r["name"]: r for r in deploy.readiness()}
+    assert rows["vercel"]["ready"] is True
+    assert rows["cloudrun"]["ready"] is False  # cli yes, token no
+    assert deploy.suggest("next.js app") == "vercel"  # ready + frontend-preferred
+
+
+def test_deploy_config_template():
+    from euron_agent import deploy
+    fly = deploy.config_template("fly.toml", {"app": "x", "region": "iad", "port": 8000})
+    assert 'app = "x"' in fly and "8000" in fly
+    df = deploy.config_template("Dockerfile.python", {"entry": "app.py", "port": 8080})
+    assert "python:3.12-slim" in df and "app.py" in df
+
+
+def test_guardrails_spend_gate():
+    from euron_agent import guardrails
+    # free-tier target → allow regardless of config
+    assert guardrails.spend_gate({}, "cloudrun")[0] == "allow"
+    # billable target, default free_tier_only → deny
+    assert guardrails.spend_gate({}, "fly")[0] == "deny"
+    # billable allowed → allow
+    assert guardrails.spend_gate({"allow_billable": True}, "fly")[0] == "allow"
+    # free_tier_only off but not explicitly allowed → ask
+    assert guardrails.spend_gate({"free_tier_only": False}, "fly")[0] == "ask"
+    assert guardrails.spend_gate({}, "nope")[0] == "deny"
+
+
+def test_guardrails_redact(monkeypatch):
+    from euron_agent import guardrails
+    monkeypatch.setenv("VERCEL_TOKEN", "supersecrettoken123456")
+    out = guardrails.redact("deploying with supersecrettoken123456 now")
+    assert "supersecrettoken123456" not in out and "VERCEL_TOKEN" in out
+    assert "***redacted***" in guardrails.redact("key ghp_" + "a" * 36)
+
+
+def test_monitor_status_and_instrument(monkeypatch):
+    from euron_agent import monitor
+    for v in ("SENTRY_DSN", "OTEL_EXPORTER_OTLP_ENDPOINT", "DD_API_KEY",
+              "UPTIMEROBOT_API_KEY", "BETTERSTACK_TOKEN", "SENTRY_AUTH_TOKEN"):
+        monkeypatch.delenv(v, raising=False)
+    assert "No monitoring configured" in monitor.status()
+    monkeypatch.setenv("SENTRY_DSN", "https://x@sentry.io/1")
+    assert monitor.instrument_env()["SENTRY_DSN"].startswith("https://")
+    assert monitor.configured_providers()["sentry"] is True
+    ok, _ = monitor.register_uptime_command("https://x.app")
+    assert ok is False  # no uptime token
+    monkeypatch.setenv("UPTIMEROBOT_API_KEY", "u123")
+    ok, cmd = monitor.register_uptime_command("https://x.app")
+    assert ok and "uptimerobot" in cmd and "https://x.app" in cmd
+
+
+def test_selfheal_health_and_rollback(monkeypatch, tmp_path):
+    from euron_agent import selfheal, deploy
+    # health check: stub http_health
+    monkeypatch.setattr(selfheal, "http_health", lambda url, timeout=10.0: (True, "HTTP 200"))
+    ok, detail = selfheal.check_health("https://x.app", "/health")
+    assert ok and "healthy" in detail
+    monkeypatch.setattr(selfheal, "http_health", lambda url, timeout=10.0: (False, "HTTP 500"))
+    ok, detail = selfheal.check_health("https://x.app", attempts=2, delay=0, _sleep=lambda s: None)
+    assert not ok and "unhealthy" in detail
+    # heal_once: unhealthy → rollback attempted (stub deploy + run_command)
+    monkeypatch.setattr(deploy, "rollback_command", lambda n, p=None: (True, "echo rolled-back"))
+    ctx = ctx_for(tmp_path)
+    report = selfheal.heal_once(ctx, "https://x.app", "cloudrun", attempts=1, delay=0)
+    assert report["action"] == "rollback" and report["rollback_ok"] is True
+
+
+def test_deploy_tools_registered_and_gated(tmp_path, monkeypatch):
+    from euron_agent.tools import TOOL_FUNCS, ToolContext, deploy_check, execute
+    for name in ("deploy", "rollback", "provision_db", "deploy_check",
+                 "monitor_status", "health_check"):
+        assert name in TOOL_FUNCS
+    ctx = ToolContext(str(tmp_path), AgentConfig(), [], deploy_cfg={})
+    assert "Deploy targets" in deploy_check(ctx).output
+    # deploy tool respects the spend gate (billable target blocked by default)
+    monkeypatch.setattr("euron_agent.deploy.cli_installed", lambda t: True)
+    monkeypatch.setenv("FLY_API_TOKEN", "x")
+    out = execute(ctx, "deploy", {"target": "fly"})
+    assert not out.ok and "blocked" in out.output

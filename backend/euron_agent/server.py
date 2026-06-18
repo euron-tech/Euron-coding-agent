@@ -31,7 +31,7 @@ from .config import Config, load_config
 from .events import AgentIO, ApprovalDecision
 from .loop import AgentSession
 
-app = FastAPI(title="Euron Agent", version="1.3.0")
+app = FastAPI(title="Euron Agent", version="1.4.0")
 app.state.token = None  # set by serve(); None disables auth (local dev/tests)
 
 

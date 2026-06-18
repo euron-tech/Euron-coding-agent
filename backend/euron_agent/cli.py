@@ -451,6 +451,11 @@ HELP = """[bold]commands[/bold]
   /secfix            autonomous security remediation (audit → fix → verify)
   /test [target]     write tests for the code and run them
   /testall           build & run a comprehensive test suite for the whole project
+  /ship [what]       plan→build→test→scan→deploy→monitor, end to end
+  /deploy [target]   deploy the project to a live URL (one prompt)
+  /deploys           list deploy targets and which are ready (CLI + token)
+  /monitor           show monitoring status (errors / uptime / providers)
+  /heal [url]        self-heal: health-check, auto-rollback, error→PR
   /audit             show & verify the tamper-evident action audit log
   /doctor            run an environment self-check
   /compact           summarize the conversation to free up context
@@ -497,6 +502,11 @@ SLASH_COMMANDS = [
     ("secfix", "autonomous security remediation"),
     ("test", "write + run tests for the code"),
     ("testall", "build & run a full test suite"),
+    ("ship", "plan→build→test→scan→deploy→monitor"),
+    ("deploy", "deploy the project to a live URL"),
+    ("deploys", "list deploy targets + readiness"),
+    ("monitor", "show monitoring status"),
+    ("heal", "self-heal: health-check, rollback, error→PR"),
     ("audit", "show & verify the action audit log"),
     ("doctor", "environment self-check"),
     ("help", "show help"),
@@ -527,6 +537,39 @@ TESTALL_PROMPT = (
     "tests; (4) run the full suite and iterate until it passes; (5) report what was "
     "added, coverage gaps that remain, and the final results. Use todo_write to "
     "plan and spawn_agent for independent modules where it speeds things up."
+)
+DEPLOY_PROMPT = (
+    "Deploy this project to a live URL. Steps: (1) call deploy_check to see which "
+    "targets are READY (CLI + token) and pick the best free-tier one for this stack "
+    "(prefer the suggested default); (2) if the app needs a database, provision_db "
+    "(neon or supabase) first and wire the connection string in as a secret/env var; "
+    "(3) generate any missing platform config (Dockerfile, fly.toml, wrangler.toml, "
+    "etc.) and a /health endpoint if absent; (4) call deploy with the chosen target — "
+    "billable targets need explicit user approval, free-tier ones proceed; (5) report "
+    "the live URL. Never print secret values; read tokens from env. Use todo_write to "
+    "track steps."
+)
+SHIP_PROMPT = (
+    "Take this project from here to LIVE and MONITORED, end to end, with approval at "
+    "the risky steps. Pipeline: (1) PLAN — restate what we're shipping, detect the "
+    "stack, pick a deploy target (deploy_check) and DB if needed; (2) BUILD — make it "
+    "run, generating any missing config and a /health endpoint; (3) TEST — write and "
+    "run tests, fix failures; (4) SECURITY — run secret_scan and dependency_audit and "
+    "fix High/Critical findings before shipping; (5) DEPLOY — provision_db if needed, "
+    "then deploy (free-tier preferred; ask before anything billable) and capture the "
+    "URL; (6) MONITOR — ensure a /health endpoint, then call monitor_status and tell "
+    "the user how to wire Sentry/OTel/uptime (set the tokens). Finish with the live "
+    "URL, what was deployed, and how to watch it. Use todo_write throughout; never "
+    "echo secrets."
+)
+HEAL_PROMPT = (
+    "Run a self-healing pass on the deployed app. (1) If a URL is given, health_check "
+    "it; if unhealthy, rollback the target to its last known-good release (this is "
+    "safe and pre-approved). (2) Call monitor_status to pull current production "
+    "errors. (3) For each real error, find the root cause in the code, write a fix "
+    "PLUS a regression test, and open a PR (open_pr) — do NOT auto-merge or deploy the "
+    "fix; leave it for human review per policy. Summarize: health, what was rolled "
+    "back, and the PRs opened."
 )
 SCAN_PROMPT = (
     "Run a fast risk scan of this repository: call secret_scan to find hard-coded "
@@ -817,6 +860,20 @@ async def _handle_command(line: str, session: AgentSession, args, io: TerminalIO
         return "run:" + SCAN_PROMPT
     elif cmd == "/secfix":
         return "run:" + SECFIX_PROMPT
+    elif cmd == "/deploy":
+        return "run:" + (rest and f"{DEPLOY_PROMPT}\nTarget/notes: {rest}" or DEPLOY_PROMPT)
+    elif cmd == "/ship":
+        return "run:" + (rest and f"{SHIP_PROMPT}\nWhat to ship: {rest}" or SHIP_PROMPT)
+    elif cmd == "/heal":
+        return "run:" + (rest and f"{HEAL_PROMPT}\nDeployed URL: {rest}" or HEAL_PROMPT)
+    elif cmd == "/monitor":
+        from . import monitor
+
+        console.print(monitor.status())
+    elif cmd == "/deploys":
+        from .tools import deploy_check as _dc
+
+        console.print(_dc(session.ctx).output)
     elif cmd == "/doctor":
         from . import doctor
 
@@ -980,6 +1037,34 @@ def cmd_scan(args) -> None:
 
 def cmd_secfix(args) -> None:
     asyncio.run(_run_task(SECFIX_PROMPT, args))
+
+
+def cmd_deploy(args) -> None:
+    if getattr(args, "check", False):
+        from .tools import ToolContext, deploy_check
+        cfg = resolve_config(args)
+        ctx = ToolContext(str(Path(args.workspace).resolve()), cfg.agent, list(cfg.ignore),
+                          deploy_cfg=cfg.deploy)
+        console.print(deploy_check(ctx).output)
+        return
+    prompt = DEPLOY_PROMPT + (f"\nTarget/notes: {args.what}" if getattr(args, "what", None) else "")
+    asyncio.run(_run_task(prompt, args))
+
+
+def cmd_ship(args) -> None:
+    prompt = SHIP_PROMPT + (f"\nWhat to ship: {args.what}" if getattr(args, "what", None) else "")
+    asyncio.run(_run_task(prompt, args))
+
+
+def cmd_heal(args) -> None:
+    prompt = HEAL_PROMPT + (f"\nDeployed URL: {args.url}" if getattr(args, "url", None) else "")
+    asyncio.run(_run_task(prompt, args))
+
+
+def cmd_monitor(args) -> None:
+    from . import monitor
+
+    console.print(monitor.status())
 
 
 def cmd_doctor(args) -> None:
@@ -1215,6 +1300,24 @@ def build_parser() -> argparse.ArgumentParser:
     sfx = sub.add_parser("secfix", help="Autonomous security remediation (audit → fix → verify)")
     sfx.add_argument("--yes", "-y", action="store_true", help="Auto-approve all actions")
     sfx.set_defaults(func=cmd_secfix)
+
+    dep = sub.add_parser("deploy", help="Deploy the project to a live URL (one prompt)")
+    dep.add_argument("what", nargs="?", help="Target or free-text notes (e.g. 'to cloudrun')")
+    dep.add_argument("--check", action="store_true", help="Just list deploy targets + readiness")
+    dep.add_argument("--yes", "-y", action="store_true", help="Auto-approve all actions")
+    dep.set_defaults(func=cmd_deploy)
+
+    shp = sub.add_parser("ship", help="Plan→build→test→scan→deploy→monitor, end to end")
+    shp.add_argument("what", nargs="?", help="What to build/ship, in one sentence")
+    shp.add_argument("--yes", "-y", action="store_true", help="Auto-approve all actions")
+    shp.set_defaults(func=cmd_ship)
+
+    hl = sub.add_parser("heal", help="Self-heal: health-check, auto-rollback, error→PR")
+    hl.add_argument("url", nargs="?", help="Deployed app URL to check")
+    hl.add_argument("--yes", "-y", action="store_true", help="Auto-approve all actions")
+    hl.set_defaults(func=cmd_heal)
+
+    sub.add_parser("monitor", help="Show monitoring status (errors/uptime/providers)").set_defaults(func=cmd_monitor)
 
     sub.add_parser("doctor", help="Run an environment self-check").set_defaults(func=cmd_doctor)
 

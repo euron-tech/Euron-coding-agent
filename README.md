@@ -9,26 +9,24 @@ anywhere, with any model, fully self-hostable.
 [![PyPI](https://img.shields.io/pypi/v/euron-coding-agent.svg)](https://pypi.org/project/euron-coding-agent/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://pypi.org/project/euron-coding-agent/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-80%20passing-brightgreen.svg)](backend/tests)
+[![Tests](https://img.shields.io/badge/tests-88%20passing-brightgreen.svg)](backend/tests)
 
 <!-- AUTOGEN:STATUS -->
-**Latest: v1.3.0** · 31 tools · 15 providers · 80 tests passing
+**Latest: v1.4.0** · 37 tools · 15 providers · 88 tests passing
 <!-- /AUTOGEN:STATUS -->
 
 </div>
 
 ---
 
-> **New in 1.3.0** - **Multi-model routing**: assign a *different model from any
-> provider* to each phase - a strong reasoning model for **planning**, your balanced
-> model for **execution**, a cheap/fast model for **sub-agents** and **verification** -
-> with automatic **escalation** to a stronger model when the cheap one struggles. No
-> provider lock-in; spend the least that still gets the job done. Configure in
-> `config.yaml` (`models:` + `routing:`), inspect with `euron-agent models` / `/models`.
-> See [docs/MULTI_MODEL.md](docs/MULTI_MODEL.md). 1.2.0 added `repo_map`, `secret_scan`
-> + `dependency_audit`, `/secfix`, a tamper-evident **audit log**, a **sandbox/egress
-> policy**, sub-agent **budgets**, a **verifier** + **self-heal**, `doctor`, and
-> `init-ci`. See the [changelog](extension/CHANGELOG.md).
+> **New in 1.4.0** - **The full loop: one sentence → built → tested → security-scanned
+> → deployed to a live URL → monitored → self-healing.** `euron-agent ship "build a
+> FastAPI todo API with a Neon DB and put it live"`. Deploy headless to **Cloud Run,
+> Cloudflare, Vercel, Netlify, Fly, Railway, Render, Docker, K8s/Helm, AWS, Azure**
+> (+ Neon/Supabase DBs) with a **free-tier-first spend gate**; wire **Sentry/OTel/uptime**
+> monitoring; and **self-heal** — auto-rollback on a failed health check, error→PR for
+> the rest. See [docs/DEPLOY.md](docs/DEPLOY.md). 1.3.0 added **multi-model routing**
+> ([docs/MULTI_MODEL.md](docs/MULTI_MODEL.md)). See the [changelog](extension/CHANGELOG.md).
 
 ## What is it?
 
@@ -51,6 +49,9 @@ local with Ollama or LM Studio.
 | Agentic loop | plan, read, edit, run, verify, with native tool-calling |
 | Any model | Anthropic, OpenAI, Gemini, OpenRouter, Groq, Cerebras, DeepSeek, Together, Mistral, xAI, Vercel AI Gateway, Ollama, LM Studio, or any OpenAI-compatible API |
 | Multi-model routing | a different model per phase (plan/execute/sub-agent/verify) across providers, cost-aware with auto-escalation |
+| Ship the full loop | one sentence → build → test → scan → **deploy to a live URL** → monitor → self-heal |
+| Auto-deploy | headless to Cloud Run, Cloudflare, Vercel, Netlify, Fly, Railway, Render, Docker, K8s/Helm, AWS, Azure (+ Neon/Supabase), free-tier-first spend gate |
+| Self-healing in prod | auto-rollback on failed health check; production errors → fix + regression test → PR |
 | Multi-agent teams | a coordinator delegates subtasks to specialists; state persists |
 | Scheduled agents | run tasks on cron (`schedule create --cron "0 9 * * MON-FRI"`) |
 | MCP, plugins, skills | unlimited tool and capability extensibility |
@@ -176,9 +177,9 @@ euron-agent serve --host 0.0.0.0 --port 8000  # self-host (prints a bearer token
 ```
 
 In-chat slash commands: `/provider /key /model /models /effort /plan /execute /review
-/security /scan /secfix /test /testall /audit /doctor /compact /init /skills /search
-/usage /undo /reset /yes /help /exit` - plus any custom command you drop in
-`.euron/commands/`.
+/security /scan /secfix /test /testall /ship /deploy /deploys /monitor /heal /audit
+/doctor /compact /init /skills /search /usage /undo /reset /yes /help /exit` - plus any
+custom command you drop in `.euron/commands/`.
 
 **Full command reference (every CLI subcommand and slash command, with
 descriptions): [docs/COMMANDS.md](docs/COMMANDS.md).**
@@ -241,6 +242,32 @@ Built-in commands that turn the agent into a security reviewer and test engineer
 - `/testall` - build and run a **complete test suite** across the project, then
   report coverage gaps. Also `euron-agent security|scan|secfix|test [--all]` for
   headless/CI use.
+
+### Ship the full loop: prompt → deployed → monitored → self-healing
+Most agents stop at a pull request. This one closes the whole loop from one sentence,
+on infra **you** control, with safety gates - the open white space in the market (no
+CLI agent ships first-class deploy + production monitoring).
+
+```bash
+euron-agent ship "build a FastAPI todo API with a Neon database and put it live"
+euron-agent deploy --check        # which targets are ready (CLI + token)?
+euron-agent monitor               # errors / uptime / providers
+euron-agent heal https://my-app.run.app   # health-check → auto-rollback → error→PR
+```
+
+- **`ship`** runs: plan → build → **test** → **security-scan** (`secret_scan` +
+  `dependency_audit`, block on High) → **deploy** → wire **monitoring** → report the URL.
+- **Deploy targets** (headless, credential-by-env): **Cloud Run, Cloudflare/Pages,
+  Vercel, Netlify, Render, Fly, Railway, Docker, Kubernetes/Helm, AWS (SAM/App Runner),
+  Azure Container Apps**, plus **Neon / Supabase** databases.
+- **Spend gate:** free-tier targets deploy directly; **billable targets are blocked
+  unless you opt in** (`deploy.allow_billable`). Secrets are read from env and never
+  printed; every deploy/rollback is in the audit log.
+- **Self-healing** (policy: rollback auto, fixes as PRs): a failed health check
+  triggers an **automatic rollback** to the last known-good release; production errors
+  become a **fix + regression test in a PR** for you to merge - never auto-deployed.
+- Run `heal` on a `schedule` cron for continuous monitor-and-remediate.
+- Full guide: **[docs/DEPLOY.md](docs/DEPLOY.md)**.
 
 ### Token-friendly code intelligence
 - `repo_map` tool - a compact symbol/outline map (per-file classes, functions,

@@ -36,12 +36,15 @@ class ToolContext:
         agent_cfg: AgentConfig,
         ignore: list[str],
         web: Optional[dict] = None,
+        deploy_cfg: Optional[dict] = None,
     ):
         self.root = Path(workspace).resolve()
         self.cfg = agent_cfg
         self.ignore = ignore
         # web search backend, e.g. {"provider": "duckduckgo", "api_key": ""}
         self.web = web or {}
+        # auto-deploy policy (free_tier_only / allow_billable / cost_ceiling_usd)
+        self.deploy_cfg = deploy_cfg or {}
 
     # --- sandbox helpers --------------------------------------------------- #
     def resolve(self, rel: str) -> Path:
@@ -220,6 +223,81 @@ def dependency_audit(ctx: ToolContext) -> ToolOutcome:
 
     clean, report = depaudit.audit(ctx)
     return ToolOutcome(report, ok=clean)
+
+
+# --------------------------------------------------------------------------- #
+# Deploy / monitor / self-heal
+# --------------------------------------------------------------------------- #
+def deploy_check(ctx: ToolContext) -> ToolOutcome:
+    """List deploy targets and whether each is ready (CLI installed + token set)."""
+    from . import deploy as _dep
+
+    rows = _dep.readiness()
+    ready = [r for r in rows if r["ready"]]
+    lines = [f"Deploy targets ({len(ready)} ready):"]
+    for r in rows:
+        mark = "✔" if r["ready"] else ("·" if r["cli_ok"] else "✗")
+        tier = "free" if r["free_tier"] and not r["billable"] else "billable"
+        lines.append(f"  {mark} {r['name']:<14} [{r['kind']}/{tier}] cli={r['cli']} "
+                     f"token={r['token_env']} {'READY' if r['ready'] else ''}")
+    lines.append("\nSuggested default: " + (_dep.suggest() or "(none)"))
+    return ToolOutcome("\n".join(lines))
+
+
+def deploy(ctx: ToolContext, target: str, params: Optional[dict] = None) -> ToolOutcome:
+    """Deploy the current project to a target (gated by the spend policy)."""
+    from . import deploy as _dep
+    from . import guardrails
+
+    decision, reason = guardrails.spend_gate(ctx.deploy_cfg, target)
+    if decision == "deny":
+        return ToolOutcome(f"Deploy to {target} blocked: {reason}", ok=False)
+    ok, cmd = _dep.deploy_command(target, params)
+    if not ok:
+        return ToolOutcome(cmd, ok=False)
+    if decision == "ask":
+        # Surface to the agent; the run_command approval gate is the human checkpoint.
+        cmd = cmd  # the agent will run this via run_command after confirming with the user
+        out = run_command(ctx, cmd)
+        note = f"[spend-gate: {reason}]\n"
+        return ToolOutcome(note + out.output, ok=out.ok)
+    out = run_command(ctx, cmd)
+    return ToolOutcome(out.output, ok=out.ok)
+
+
+def rollback(ctx: ToolContext, target: str, params: Optional[dict] = None) -> ToolOutcome:
+    """Roll a target back to its previous known-good release (safe to automate)."""
+    from . import deploy as _dep
+
+    ok, cmd = _dep.rollback_command(target, params)
+    if not ok:
+        return ToolOutcome(cmd, ok=False)
+    return run_command(ctx, cmd)
+
+
+def provision_db(ctx: ToolContext, provider: str, params: Optional[dict] = None) -> ToolOutcome:
+    """Provision a managed database (neon / supabase)."""
+    from . import deploy as _dep
+
+    ok, cmd = _dep.deploy_command(provider, params)
+    if not ok:
+        return ToolOutcome(cmd, ok=False)
+    return run_command(ctx, cmd)
+
+
+def monitor_status(ctx: ToolContext) -> ToolOutcome:
+    """Report configured monitoring providers and current error/uptime status."""
+    from . import monitor
+
+    return ToolOutcome(monitor.status())
+
+
+def health_check(ctx: ToolContext, url: str, path: str = "/health") -> ToolOutcome:
+    """Check a deployed app's health endpoint."""
+    from . import selfheal
+
+    healthy, detail = selfheal.check_health(url, path)
+    return ToolOutcome(detail, ok=healthy)
 
 
 # --------------------------------------------------------------------------- #
@@ -519,6 +597,12 @@ TOOL_FUNCS = {
     "repo_map": repo_map,
     "secret_scan": secret_scan,
     "dependency_audit": dependency_audit,
+    "deploy_check": deploy_check,
+    "deploy": deploy,
+    "rollback": rollback,
+    "provision_db": provision_db,
+    "monitor_status": monitor_status,
+    "health_check": health_check,
     "write_file": write_file,
     "edit_file": edit_file,
     "multi_edit": multi_edit,
@@ -574,6 +658,15 @@ def preview_for(ctx: ToolContext, name: str, args: dict) -> Optional[str]:
             return f"$ {args.get('command')}  (background)"
         if name == "git_commit":
             return f"git commit -m \"{args.get('message', '')}\""
+        if name in ("deploy", "provision_db"):
+            from . import deploy as _dep
+            tgt = args.get("target") or args.get("provider", "")
+            ok, cmd = _dep.deploy_command(tgt, args.get("params"))
+            return f"DEPLOY {tgt}: $ {cmd}" if ok else f"⚠ {cmd}"
+        if name == "rollback":
+            from . import deploy as _dep
+            ok, cmd = _dep.rollback_command(args.get("target", ""), args.get("params"))
+            return f"ROLLBACK: $ {cmd}" if ok else f"⚠ {cmd}"
     except Exception as e:  # noqa: BLE001
         return f"(could not build preview: {e})"
     return None

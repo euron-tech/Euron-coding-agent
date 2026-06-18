@@ -95,6 +95,13 @@ class Config:
     # run_command sandbox/egress policy: deny_commands (regex), allow_commands
     # (allowlist; if non-empty everything else is denied), block_network (bool).
     sandbox: dict = field(default_factory=dict)
+    # auto-deploy policy: {"default_target": "cloudrun", "free_tier_only": true,
+    # "allow_billable": false, "cost_ceiling_usd": 0}
+    deploy: dict = field(default_factory=dict)
+    # monitoring providers / endpoints (mostly read from env; see monitor.py)
+    monitoring: dict = field(default_factory=dict)
+    # self-heal policy: {"strategy": "rollback-auto-fix-pr", "auto_merge_low_risk": false}
+    selfheal: dict = field(default_factory=dict)
 
 
 DEFAULT_IGNORE = [
@@ -341,4 +348,7 @@ def load_config(
         models=raw.get("models", {}) or {},
         routing=raw.get("routing", {}) or {},
         sandbox=raw.get("sandbox", {}) or {},
+        deploy=raw.get("deploy", {}) or {},
+        monitoring=raw.get("monitoring", {}) or {},
+        selfheal=raw.get("selfheal", {}) or {},
     )
